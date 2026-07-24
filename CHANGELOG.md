@@ -72,6 +72,9 @@ for details.
   exit `2` on high-severity changes.
 - Lint rules: unreachable route (shadowing), agent filter without explicit
   failure-mode, shadow traffic to a production upstream.
+- Fuzzing (`fuzz/`, cargo-fuzz): targets for the KDL config parser and the v2
+  agent-protocol binary frame decoders, plus a nightly bounded CI job. Confirmed
+  the decoders are panic-safe on arbitrary input.
 
 ### Fixed
 

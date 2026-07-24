@@ -1,0 +1,44 @@
+[package]
+name = "zentinel-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+# This crate is excluded from the workspace (see the root Cargo.toml `exclude`)
+# and requires a nightly toolchain (libFuzzer). Run with `cargo +nightly fuzz`.
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+bytes = "1.9"
+zentinel-config = { path = "../crates/config" }
+zentinel-agent-protocol = { path = "../crates/agent-protocol" }
+
+[[bin]]
+name = "kdl_config"
+path = "fuzz_targets/kdl_config.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "agent_request_headers"
+path = "fuzz_targets/agent_request_headers.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "agent_body_chunk"
+path = "fuzz_targets/agent_body_chunk.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "agent_response"
+path = "fuzz_targets/agent_response.rs"
+test = false
+doc = false
+bench = false

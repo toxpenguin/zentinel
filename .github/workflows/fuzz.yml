@@ -1,0 +1,63 @@
+name: Fuzz
+
+# Bounded-time fuzzing of the highest-value parsers, on a nightly schedule.
+# Targets: KDL config parser (untrusted-ish, complex grammar) and the
+# network-facing agent-protocol v2 binary frame decoders.
+
+on:
+  schedule:
+    # Nightly at 03:00 UTC (after the build nightly at 02:00).
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+    inputs:
+      max_total_time:
+        description: Seconds to run each fuzz target
+        required: false
+        default: '180'
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  fuzz:
+    name: Fuzz ${{ matrix.target }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - kdl_config
+          - agent_request_headers
+          - agent_body_chunk
+          - agent_response
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Install nightly toolchain
+        uses: dtolnay/rust-toolchain@nightly
+
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz --locked
+
+      - name: Seed corpus from example configs (KDL target)
+        if: matrix.target == 'kdl_config'
+        run: |
+          mkdir -p fuzz/corpus/kdl_config
+          cp config/examples/*.kdl fuzz/corpus/kdl_config/ 2>/dev/null || true
+
+      - name: Run fuzzer (bounded)
+        # `rust-toolchain.toml` pins stable, which overrides the action's
+        # default; cargo-fuzz needs nightly, so select it explicitly.
+        run: |
+          cargo +nightly fuzz run "${{ matrix.target }}" -- \
+            -max_total_time="${{ github.event.inputs.max_total_time || '180' }}" \
+            -rss_limit_mb=4096
+
+      - name: Upload crash artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-artifacts-${{ matrix.target }}
+          path: fuzz/artifacts/
+          if-no-files-found: ignore

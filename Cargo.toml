@@ -16,6 +16,8 @@ exclude = [
     "crates/playground-wasm",
     "crates/config-inspect",
     "agents/wasm-allowlist",
+    # Fuzz crate: requires a nightly toolchain (libFuzzer), built via cargo-fuzz.
+    "fuzz",
 ]
 resolver = "2"
 
