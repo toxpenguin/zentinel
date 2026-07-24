@@ -3,12 +3,15 @@
 # Unit (lib) tests run here so regressions are caught before merge; the full
 # test suite (integration, doc tests) is in tests.yml (manual / weekly /
 # push-to-main only) to keep PR-trigger Action minutes low.
+#
+# `labs` is this fork's working branch; pushing to it runs CI so experimental
+# commits are validated without opening a PR. Upstream only ships `main`.
 
 name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, labs]
   pull_request:
 
 concurrency:
