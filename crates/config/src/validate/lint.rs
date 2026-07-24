@@ -163,34 +163,32 @@ fn route_generalizes(higher: &RouteConfig, lower: &RouteConfig) -> bool {
 
 /// Every path condition on `higher` must be guaranteed by `lower`.
 fn path_generalizes(higher: &RouteConfig, lower: &RouteConfig) -> bool {
-    for h in &higher.matches {
-        match h {
-            MatchCondition::PathPrefix(hp) => {
-                if hp == "/" {
-                    continue; // matches every path
-                }
-                if !lower
+    higher
+        .matches
+        .iter()
+        .all(|h| higher_path_cond_is_guaranteed(h, lower))
+}
+
+/// Is a single path condition `h` from the higher route guaranteed to hold for
+/// every request the lower route matches?
+fn higher_path_cond_is_guaranteed(h: &MatchCondition, lower: &RouteConfig) -> bool {
+    match h {
+        MatchCondition::PathPrefix(hp) => {
+            hp == "/" // matches every path
+                || lower
                     .matches
                     .iter()
                     .any(|l| path_cond_guarantees_prefix(l, hp))
-                {
-                    return false;
-                }
-            }
-            MatchCondition::Path(he) => {
-                if !lower
-                    .matches
-                    .iter()
-                    .any(|l| matches!(l, MatchCondition::Path(le) if le == he))
-                {
-                    return false;
-                }
-            }
-            MatchCondition::PathRegex(_) => return false, // cannot prove implication
-            _ => {}
         }
+        MatchCondition::Path(he) => lower
+            .matches
+            .iter()
+            .any(|l| matches!(l, MatchCondition::Path(le) if le == he)),
+        // A regex path condition cannot be proven implied.
+        MatchCondition::PathRegex(_) => false,
+        // Non-path conditions are handled by the other generalizes checks.
+        _ => true,
     }
-    true
 }
 
 /// Does lower-route condition `l` guarantee the request path has prefix `hp`
