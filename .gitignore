@@ -36,3 +36,4 @@ tests/chaos/results/
 # Local AI tooling state (not for commit)
 .tokensave/
 .claude/.headroom_wrap_marker.json
+.claude/memory/
