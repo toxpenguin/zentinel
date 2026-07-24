@@ -351,3 +351,48 @@ let config = Config::from_file("zentinel.kdl")?;
 config.validate()?;
 println!("Configuration is valid");
 ```
+
+## Lint Rules (best practices)
+
+`zentinel lint --config zentinel.kdl` runs advisory best-practice checks over a
+schema-valid config. Lint always exits `0` — warnings are recommendations, not
+errors. Rules live in `crates/config/src/validate/lint.rs`.
+
+Existing rules warn on: missing retry policy, missing route timeout, missing
+upstream, missing/single-target health checks, HTTP on `:80` without TLS,
+missing HSTS when TLS is enabled, and disabled metrics/access logs.
+
+Additional rules:
+
+### Unreachable route
+
+Warns when a route can never match because a **strictly-higher-priority** route
+is evaluated first and matches a superset of its requests (e.g. a
+`priority "high"` `path-prefix "/"` catch-all placed above specific routes).
+
+Conservative by design: it only warns when shadowing is *provable* and bails on
+anything it cannot prove (regex conditions, host widening, an unconstrained
+lower route). It never emits a false positive, and it detects only
+strictly-higher-priority shadowing — equal-priority shadowing decided by
+specificity tie-breaks is intentionally not flagged, so "no warning" is not a
+guarantee that no route is shadowed.
+
+### Agent filter without an explicit failure-mode
+
+Warns when a route references an agent filter that declares no `failure-mode`.
+On agent failure such a filter silently inherits the route's `failure-mode`,
+which is an implied policy — set it explicitly on the filter.
+
+### Shadow traffic to a production upstream
+
+Warns when a route's `shadow` block mirrors traffic to an upstream that also
+serves live traffic as some route's primary target (including the route's own).
+Mirrored requests reaching production can cause duplicate side effects; use a
+dedicated shadow upstream.
+
+> Not implemented: a **timeout-inversion** rule (route timeout vs upstream/agent
+> timeouts) is deferred — route-level `timeout-secs`/`failure-mode` inside a KDL
+> `policies` block are not currently parsed, so the rule would have nothing to
+> compare for KDL configs. A **weak-TLS-minimum** rule is unnecessary: the
+> `TlsVersion` type only admits `TLS1.2`/`TLS1.3`, so a sub-1.2 minimum cannot
+> be represented.
