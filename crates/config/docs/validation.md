@@ -396,3 +396,39 @@ dedicated shadow upstream.
 > compare for KDL configs. A **weak-TLS-minimum** rule is unnecessary: the
 > `TlsVersion` type only admits `TLS1.2`/`TLS1.3`, so a sub-1.2 minimum cannot
 > be represented.
+
+## Semantic Diff
+
+`zentinel diff <old> <new>` reports the **behavioral** delta between two
+configs — not a textual diff. It answers "what does this config change actually
+*do*?" so an operator or CI can gate a deploy on the blast radius. Rules live in
+`crates/config/src/validate/diff.rs`.
+
+Each delta is `High` (gates CI — silently breaks traffic or removes a security
+control) or `Advisory` (review recommended). Output is a human table or `--json`
+(stdout; logs go to stderr). **Exit codes:** `0` clean, `1` load/parse error,
+`2` a high-severity change is present.
+
+Detected deltas include:
+
+- **Routes** — added / removed / **became unreachable** (reusing the linter's
+  shadowing analysis) / primary upstream changed / match conditions changed /
+  priority changed / filter chain changed (removing an agent filter is High).
+- **Upstreams** — added / removed / target set / load-balancing / health check.
+- **Listeners** — added / removed / TLS added-or-removed / **TLS minimum
+  lowered** / client-auth toggled / address / default-route.
+- **Agents** — added / removed / **failure-mode flip** (with direction) /
+  transport / type / timeout.
+- **Filters** — added / removed / type change / agent-filter failure-mode flip.
+
+**Semantics:**
+
+- Entities match across configs by **id**; a rename reads as remove + add.
+- Equality is behavioral, not textual: a route's *match conditions* compare as a
+  set (reordering them — and reordering/​re-casing a `method` list — is no delta),
+  while a route's *filter chain* compares in order (execution order is
+  load-bearing).
+- "Became unreachable" inherits the linter's blind spot: only
+  strictly-higher-priority shadowing is detected.
+- Route-level `timeout-secs`/`failure-mode` are not surfaced (not parsed from
+  KDL — see the lint note above); agent- and filter-level failure modes are.

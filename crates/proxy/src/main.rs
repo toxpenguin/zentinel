@@ -135,6 +135,21 @@ enum Commands {
         json: bool,
     },
 
+    /// Diff two configs and report behavioral changes (dry-run, no server)
+    Diff {
+        /// The old (baseline) configuration file
+        #[arg(value_name = "OLD")]
+        old: String,
+
+        /// The new configuration file to compare against the baseline
+        #[arg(value_name = "NEW")]
+        new: String,
+
+        /// Emit JSON instead of human-readable text
+        #[arg(long = "json")]
+        json: bool,
+    },
+
     /// Manage bundled agents (install, status, update)
     Bundle(BundleArgs),
 }
@@ -186,6 +201,7 @@ fn main() -> Result<()> {
             &header,
             json,
         ),
+        Some(Commands::Diff { old, new, json }) => diff_configs(&old, &new, json),
         Some(Commands::Bundle(args)) => {
             // Initialize minimal logging for bundle commands
             tracing_subscriber::fmt()
@@ -476,6 +492,45 @@ fn explain_request_cmd(
     // Exit non-zero when nothing matched, so scripts can gate on routability.
     if report.no_match {
         std::process::exit(1);
+    }
+    Ok(())
+}
+
+/// Diff two configuration files and report behavioral changes.
+///
+/// Pure static analysis: loads and validates both configs, then reports routes,
+/// upstreams, listeners, agents, and filters that changed behavior. Exits `2`
+/// when any high-severity change is present so CI can gate on it.
+fn diff_configs(old_path: &str, new_path: &str, json: bool) -> Result<()> {
+    // Logs to stderr; the report goes to stdout (clean for `--json` piping).
+    tracing_subscriber::fmt()
+        .with_target(false)
+        .with_level(true)
+        .with_writer(std::io::stderr)
+        .init();
+
+    let old = Config::from_file(old_path)
+        .with_context(|| format!("Failed to load old config '{old_path}'"))?;
+    let new = Config::from_file(new_path)
+        .with_context(|| format!("Failed to load new config '{new_path}'"))?;
+
+    old.validate().context("Old configuration is invalid")?;
+    new.validate().context("New configuration is invalid")?;
+
+    let diff = zentinel_config::validate::diff::diff(&old, &new);
+
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&diff).context("Failed to serialize diff")?
+        );
+    } else {
+        print!("{}", diff.render_text());
+    }
+
+    // Exit 2 when a high-severity change is present so CI can gate on it.
+    if diff.has_high_severity() {
+        std::process::exit(2);
     }
     Ok(())
 }

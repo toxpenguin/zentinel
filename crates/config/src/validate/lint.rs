@@ -125,27 +125,30 @@ pub fn lint_config(config: &Config) -> ValidationResult {
 fn check_unreachable_routes(config: &Config, result: &mut ValidationResult) {
     let routes = &config.routes;
     for (li, lower) in routes.iter().enumerate() {
-        for (hi, higher) in routes.iter().enumerate() {
-            if hi == li {
-                continue;
-            }
-            if higher.priority > lower.priority && route_generalizes(higher, lower) {
-                result.add_warning(ValidationWarning::new(format!(
-                    "Route '{}' (priority {}) is unreachable: route '{}' (priority {}) is \
-                     evaluated first and matches every request '{}' would. Narrow '{}' or raise \
-                     the priority of '{}'.",
-                    lower.id,
-                    lower.priority,
-                    higher.id,
-                    higher.priority,
-                    lower.id,
-                    higher.id,
-                    lower.id
-                )));
-                break; // one warning per unreachable route
-            }
+        if let Some(higher) = shadowing_route(routes, li) {
+            result.add_warning(ValidationWarning::new(format!(
+                "Route '{}' (priority {}) is unreachable: route '{}' (priority {}) is \
+                 evaluated first and matches every request '{}' would. Narrow '{}' or raise \
+                 the priority of '{}'.",
+                lower.id, lower.priority, higher.id, higher.priority, lower.id, higher.id, lower.id
+            )));
         }
     }
+}
+
+/// The strictly-higher-priority route that shadows `routes[target_idx]`, if any
+/// — the route that makes it unreachable. Shared with the config-diff module
+/// (`super::diff`) for reachability analysis.
+///
+/// Detects only *strictly-higher-priority* shadowing (see
+/// [`check_unreachable_routes`]); equal-priority shadowing decided by
+/// specificity tie-breaks is intentionally not detected.
+pub(crate) fn shadowing_route(routes: &[RouteConfig], target_idx: usize) -> Option<&RouteConfig> {
+    let lower = &routes[target_idx];
+    routes.iter().enumerate().find_map(|(hi, higher)| {
+        (hi != target_idx && higher.priority > lower.priority && route_generalizes(higher, lower))
+            .then_some(higher)
+    })
 }
 
 /// True if every request matching `lower` also matches `higher`. Conservative:

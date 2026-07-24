@@ -5,6 +5,7 @@
 
 pub mod agents;
 pub mod certs;
+pub mod diff;
 pub mod lint;
 pub mod network;
 

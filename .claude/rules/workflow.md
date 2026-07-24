@@ -356,6 +356,9 @@ cargo run --bin zentinel -- lint --config config/zentinel.kdl
 # Explain how a synthetic request would route (dry-run, no server)
 cargo run --bin zentinel -- explain --config config/zentinel.kdl \
     --method GET --path /api/users --header host=example.com
+
+# Diff two configs for behavioral changes (CI-gateable; exit 2 on high-severity)
+cargo run --bin zentinel -- diff old.kdl new.kdl        # add --json for CI
 ```
 
 > There are no `--check`/`--dry-run` flags; use the `test`/`validate`/`lint`
