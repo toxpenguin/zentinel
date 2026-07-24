@@ -447,6 +447,7 @@ Workflows in `.github/workflows/`:
 | Workflow | Trigger | Purpose |
 |----------|---------|---------|
 | `ci.yml` | Push, PR | Build, test, lint |
+| `bench.yml` | PR (agent-protocol paths) | Hot-path benchmark regression gate |
 | `release.yml` | Tag push | Build binaries, publish |
 | `docs.yml` | Push to main | Deploy documentation |
 

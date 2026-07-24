@@ -20,6 +20,7 @@ The agent protocol provides:
 | [transports.md](./v2/transports.md) | Transport options (gRPC, UDS, Reverse) |
 | [reverse-connections.md](./v2/reverse-connections.md) | Reverse connection setup |
 | [performance-roadmap.md](./performance-roadmap.md) | Performance bottlenecks and optimization plans |
+| [benchmarks.md](./benchmarks.md) | Criterion suite and the CI hot-path regression gate |
 
 ## Architecture
 

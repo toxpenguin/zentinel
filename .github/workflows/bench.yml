@@ -1,0 +1,112 @@
+name: Bench Gate
+
+# Regression gate for the agent-protocol request hot path.
+#
+# Runs the production-representative integration benchmark
+# (`full_request_path/json_path`) on the PR merge-base and the PR head
+# back-to-back on the SAME runner, then fails if the hot path regressed by more
+# than the threshold. Turns "production correctness beats feature breadth" into
+# an enforced budget instead of a review-time hope (IDEAS.md #10).
+#
+# Why same-runner, back-to-back (not a stored/cross-run baseline):
+# GitHub-hosted runners vary up to ~2x across CPU generations (Intel vs AMD).
+# Comparing against a baseline captured in a *prior* run bakes that
+# between-machine variance into the result -> flaky. Measuring base and head on
+# one physical runner cancels it. No external action, no gh-pages state branch
+# (Manifesto: no hidden control planes, no vendor lock-in).
+#
+# Posture: generous hard-fail (20%). Microbenchmarks on shared CI are noisy; a
+# tight gate cries wolf and gets muted, which is worse than no gate (Manifesto:
+# calm, no surprises; repo rule: no flaky tests). Tune the threshold via
+# BENCH_REGRESSION_THRESHOLD. To make the gate advisory instead of blocking, add
+# `continue-on-error: true` to the "Evaluate regression gate" step.
+#
+# Scope: only agent-protocol's `hot_path` bench exists today, and only its
+# production-representative arm is gated (not the vec-vs-smallvec /
+# atomic-vs-rwlock / json-vs-msgpack comparison benches). Extend GATED_BENCHES
+# in scripts/bench-gate.py when proxy routing/filtering benches land.
+
+on:
+  pull_request:
+    paths:
+      - 'crates/agent-protocol/**'
+      - 'scripts/bench-gate.py'
+      - '.github/workflows/bench.yml'
+
+concurrency:
+  group: bench-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  # Fail the gate if the hot path regresses by more than this fraction.
+  BENCH_REGRESSION_THRESHOLD: '0.20'
+  # Criterion filter (regex over benchmark ids). Keeps CI bounded to the gated
+  # bench; must stay in sync with GATED_BENCHES in scripts/bench-gate.py.
+  BENCH_FILTER: 'full_request_path'
+
+jobs:
+  bench-gate:
+    name: Hot-path regression gate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          sudo docker image prune --all --force
+
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          # Full history so the PR base and head commits are both present.
+          fetch-depth: 0
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install protoc
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y protobuf-compiler
+
+      - name: Cache cargo registry
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-registry-
+
+      - name: Cache cargo build
+        uses: actions/cache@v6
+        with:
+          path: target
+          key: ${{ runner.os }}-cargo-bench-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-bench-
+
+      - name: Resolve merge-base
+        id: base
+        run: |
+          BASE=$(git merge-base \
+            "${{ github.event.pull_request.base.sha }}" \
+            "${{ github.event.pull_request.head.sha }}")
+          echo "sha=$BASE" >> "$GITHUB_OUTPUT"
+          echo "Merge-base: $BASE"
+
+      - name: Benchmark merge-base (save baseline)
+        run: |
+          git checkout --quiet --detach "${{ steps.base.outputs.sha }}"
+          cargo bench -p zentinel-agent-protocol --bench hot_path -- \
+            --save-baseline base "$BENCH_FILTER"
+
+      - name: Benchmark PR head (compare to baseline)
+        run: |
+          git checkout --quiet --detach "${{ github.event.pull_request.head.sha }}"
+          cargo bench -p zentinel-agent-protocol --bench hot_path -- \
+            --baseline base "$BENCH_FILTER"
+
+      - name: Evaluate regression gate
+        run: python3 scripts/bench-gate.py
