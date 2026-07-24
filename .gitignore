@@ -32,3 +32,7 @@ tests/chaos/results/
 
 # Claude roadmap files (internal planning, not for commit)
 .claude/*roadmap*.md
+
+# Local AI tooling state (not for commit)
+.tokensave/
+.claude/.headroom_wrap_marker.json
