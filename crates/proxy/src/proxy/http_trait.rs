@@ -167,12 +167,26 @@ impl ProxyHttp for ZentinelProxy {
                     request_info = request_info
                         .with_headers(RequestInfo::build_headers(req_header.headers.iter()));
                 }
+                // Include query params (parsed from `uri.query()`, since `path`
+                // above is `uri.path()` with the query already stripped).
+                if matcher.needs_query_params() {
+                    if let Some(query) = req_header.uri.query() {
+                        request_info =
+                            request_info.with_query_params(RequestInfo::parse_query_string(query));
+                    }
+                }
                 matcher.match_request(&request_info)
             } else {
                 let route_matcher = self.route_matcher.read();
                 if route_matcher.needs_headers() {
                     request_info = request_info
                         .with_headers(RequestInfo::build_headers(req_header.headers.iter()));
+                }
+                if route_matcher.needs_query_params() {
+                    if let Some(query) = req_header.uri.query() {
+                        request_info =
+                            request_info.with_query_params(RequestInfo::parse_query_string(query));
+                    }
                 }
                 route_matcher.match_request(&request_info)
             };
@@ -294,8 +308,10 @@ impl ProxyHttp for ZentinelProxy {
                             .with_headers(RequestInfo::build_headers(req_header.headers.iter()));
                     }
                     if matcher.needs_query_params() {
-                        request_info = request_info
-                            .with_query_params(RequestInfo::parse_query_params(&ctx.path));
+                        if let Some(ref query) = ctx.query {
+                            request_info = request_info
+                                .with_query_params(RequestInfo::parse_query_string(query));
+                        }
                     }
                     matcher.match_request(&request_info)
                 } else {
@@ -307,8 +323,10 @@ impl ProxyHttp for ZentinelProxy {
                     }
                     // Only parse query params if any route needs query param matching
                     if route_matcher.needs_query_params() {
-                        request_info = request_info
-                            .with_query_params(RequestInfo::parse_query_params(&ctx.path));
+                        if let Some(ref query) = ctx.query {
+                            request_info = request_info
+                                .with_query_params(RequestInfo::parse_query_string(query));
+                        }
                     }
                     route_matcher.match_request(&request_info)
                 };

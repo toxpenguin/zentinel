@@ -126,6 +126,7 @@ pub fn parse_routes(node: &kdl::KdlNode) -> Result<Vec<RouteConfig>> {
 
                 // Parse policies block (request-headers, response-headers, etc.)
                 let (request_headers, response_headers) = parse_route_header_policies(child)?;
+                let (policy_timeout_secs, policy_failure_mode) = parse_route_policy_scalars(child)?;
 
                 // Warn about unrecognized child nodes
                 if let Some(route_children) = child.children() {
@@ -147,6 +148,8 @@ pub fn parse_routes(node: &kdl::KdlNode) -> Result<Vec<RouteConfig>> {
                 let policies = RoutePolicies {
                     request_headers,
                     response_headers,
+                    timeout_secs: policy_timeout_secs,
+                    failure_mode: policy_failure_mode,
                     cache: cache_config,
                     ..RoutePolicies::default()
                 };
@@ -223,8 +226,15 @@ fn parse_match_conditions(node: &kdl::KdlNode) -> Result<Vec<MatchCondition>> {
                             }
                         }
                         "method" => {
-                            if let Some(method) = get_first_arg_string(match_node) {
-                                matches.push(MatchCondition::Method(vec![method]));
+                            // Collect *all* string args: `method "GET" "POST"` must
+                            // match either method, not just the first.
+                            let methods: Vec<String> = match_node
+                                .entries()
+                                .iter()
+                                .filter_map(|e| e.value().as_string().map(|s| s.to_string()))
+                                .collect();
+                            if !methods.is_empty() {
+                                matches.push(MatchCondition::Method(methods));
                             }
                         }
                         "query-param" => {
@@ -363,6 +373,35 @@ fn parse_route_header_policies(
     }
 
     Ok((request_headers, response_headers))
+}
+
+/// Parse scalar route policies (`timeout-secs`, `failure-mode`) from a route's
+/// `policies` block. Header and cache policies are parsed separately.
+///
+/// # Errors
+///
+/// Returns an error if `failure-mode` is set to an unrecognized value.
+fn parse_route_policy_scalars(node: &kdl::KdlNode) -> Result<(Option<u64>, FailureMode)> {
+    let mut timeout_secs = None;
+    let mut failure_mode = FailureMode::default();
+
+    if let Some(route_children) = node.children() {
+        if let Some(policies_node) = route_children.get("policies") {
+            timeout_secs = get_int_entry(policies_node, "timeout-secs").map(|v| v as u64);
+
+            if let Some(mode) = get_string_entry(policies_node, "failure-mode") {
+                failure_mode = match mode.as_str() {
+                    "open" => FailureMode::Open,
+                    "closed" => FailureMode::Closed,
+                    other => anyhow::bail!(
+                        "Unknown failure-mode '{other}' in route policies (use 'open' or 'closed')"
+                    ),
+                };
+            }
+        }
+    }
+
+    Ok((timeout_secs, failure_mode))
 }
 
 /// Parse a header modifications block (rename, set, add, remove).
@@ -1672,7 +1711,87 @@ fn parse_pii_detection_config(node: &kdl::KdlNode) -> Result<PiiDetectionConfig>
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{FailureMode, MatchCondition};
     use zentinel_common::types::Priority;
+
+    /// Parse a `routes { ... }` fragment into route configs.
+    fn parse_routes_from(kdl: &str) -> Vec<RouteConfig> {
+        let doc: ::kdl::KdlDocument = kdl.parse().expect("KDL parses");
+        let routes_node = doc.get("routes").expect("routes node present");
+        parse_routes(routes_node).expect("routes parse")
+    }
+
+    #[test]
+    fn method_match_keeps_all_values() {
+        let routes = parse_routes_from(
+            r#"
+            routes {
+                route "r" {
+                    matches { method "GET" "POST" }
+                    upstream "u"
+                }
+            }
+            "#,
+        );
+        let methods = routes[0].matches.iter().find_map(|m| match m {
+            MatchCondition::Method(v) => Some(v.clone()),
+            _ => None,
+        });
+        assert_eq!(methods, Some(vec!["GET".to_string(), "POST".to_string()]));
+    }
+
+    #[test]
+    fn route_policies_parse_timeout_and_failure_mode() {
+        let routes = parse_routes_from(
+            r#"
+            routes {
+                route "r" {
+                    matches { path-prefix "/" }
+                    upstream "u"
+                    policies {
+                        timeout-secs 30
+                        failure-mode "open"
+                    }
+                }
+            }
+            "#,
+        );
+        assert_eq!(routes[0].policies.timeout_secs, Some(30));
+        assert_eq!(routes[0].policies.failure_mode, FailureMode::Open);
+    }
+
+    #[test]
+    fn route_policies_default_when_absent() {
+        let routes = parse_routes_from(
+            r#"
+            routes {
+                route "r" {
+                    matches { path-prefix "/" }
+                    upstream "u"
+                }
+            }
+            "#,
+        );
+        assert_eq!(routes[0].policies.timeout_secs, None);
+        assert_eq!(routes[0].policies.failure_mode, FailureMode::Closed);
+    }
+
+    #[test]
+    fn route_policies_reject_unknown_failure_mode() {
+        let doc: ::kdl::KdlDocument = r#"
+            routes {
+                route "r" {
+                    matches { path-prefix "/" }
+                    upstream "u"
+                    policies { failure-mode "maybe" }
+                }
+            }
+            "#
+        .parse()
+        .unwrap();
+        let routes_node = doc.get("routes").unwrap();
+        assert!(parse_routes(routes_node).is_err());
+    }
 
     /// Parse a KDL fragment like `route "test" { priority ... }` and return
     /// the resulting `Priority`. The parser expects a `route` parent node, so

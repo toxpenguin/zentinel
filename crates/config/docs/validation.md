@@ -390,12 +390,12 @@ serves live traffic as some route's primary target (including the route's own).
 Mirrored requests reaching production can cause duplicate side effects; use a
 dedicated shadow upstream.
 
-> Not implemented: a **timeout-inversion** rule (route timeout vs upstream/agent
-> timeouts) is deferred — route-level `timeout-secs`/`failure-mode` inside a KDL
-> `policies` block are not currently parsed, so the rule would have nothing to
-> compare for KDL configs. A **weak-TLS-minimum** rule is unnecessary: the
-> `TlsVersion` type only admits `TLS1.2`/`TLS1.3`, so a sub-1.2 minimum cannot
-> be represented.
+> Not implemented: a **timeout-inversion** rule (route timeout shorter than the
+> upstream connect timeout, or an agent timeout ≥ the route timeout) is deferred
+> — route-level `timeout-secs`/`failure-mode` now parse from KDL, so the rule is
+> viable; it is simply not yet written. A **weak-TLS-minimum** rule is
+> unnecessary: the `TlsVersion` type only admits `TLS1.2`/`TLS1.3`, so a sub-1.2
+> minimum cannot be represented.
 
 ## Semantic Diff
 
@@ -412,8 +412,9 @@ control) or `Advisory` (review recommended). Output is a human table or `--json`
 Detected deltas include:
 
 - **Routes** — added / removed / **became unreachable** (reusing the linter's
-  shadowing analysis) / primary upstream changed / match conditions changed /
-  priority changed / filter chain changed (removing an agent filter is High).
+  shadowing analysis) / primary upstream changed / **failure-mode flip** (High,
+  with direction) / timeout changed / match conditions changed / priority
+  changed / filter chain changed (removing an agent filter is High).
 - **Upstreams** — added / removed / target set / load-balancing / health check.
 - **Listeners** — added / removed / TLS added-or-removed / **TLS minimum
   lowered** / client-auth toggled / address / default-route.
@@ -430,5 +431,6 @@ Detected deltas include:
   load-bearing).
 - "Became unreachable" inherits the linter's blind spot: only
   strictly-higher-priority shadowing is detected.
-- Route-level `timeout-secs`/`failure-mode` are not surfaced (not parsed from
-  KDL — see the lint note above); agent- and filter-level failure modes are.
+- Route-level `failure-mode`/`timeout-secs` are compared; other `policies`
+  fields (`rate-limit`, buffering, `max-body-size`) are not yet parsed from KDL,
+  so they are not compared.

@@ -17,10 +17,10 @@
 //! - Reachability deltas reuse the linter's shadowing analysis, which detects
 //!   only *strictly-higher-priority* shadowing — so "became unreachable" carries
 //!   that same blind spot (equal-priority/specificity shadowing is not detected).
-//! - Route-level `timeout-secs` / `failure-mode` are not surfaced: the KDL
-//!   parser does not populate them from a `policies` block, so there is nothing
-//!   to compare for KDL configs. Agent- and filter-level failure modes *are*
-//!   compared.
+//! - Route-level `failure-mode` and `timeout-secs` are compared (a failure-mode
+//!   flip is High — a security-posture change). Other `policies` fields
+//!   (`rate-limit`, request/response buffering, `max-body-size`) are not yet
+//!   parsed from KDL, so they are not compared.
 
 use std::collections::HashMap;
 
@@ -208,6 +208,32 @@ fn diff_routes(old: &Config, new: &Config, deltas: &mut Vec<Delta>) {
                 "route",
                 *id,
                 format!("route '{id}' priority {} -> {}", o.priority, n.priority),
+            ));
+        }
+
+        // Failure-mode flip — a security-posture change (fail-open vs fail-closed).
+        if o.policies.failure_mode != n.policies.failure_mode {
+            deltas.push(Delta::high(
+                "route",
+                *id,
+                format!(
+                    "route '{id}' failure-mode {} -> {}",
+                    fmode(o.policies.failure_mode),
+                    fmode(n.policies.failure_mode)
+                ),
+            ));
+        }
+
+        // Request timeout override.
+        if o.policies.timeout_secs != n.policies.timeout_secs {
+            deltas.push(Delta::advisory(
+                "route",
+                *id,
+                format!(
+                    "route '{id}' timeout {} -> {}",
+                    opt_secs(o.policies.timeout_secs),
+                    opt_secs(n.policies.timeout_secs)
+                ),
             ));
         }
 
@@ -635,6 +661,13 @@ fn opt_str(o: &Option<String>) -> String {
     }
 }
 
+fn opt_secs(s: Option<u64>) -> String {
+    match s {
+        Some(v) => format!("{v}s"),
+        None => "(listener default)".to_string(),
+    }
+}
+
 /// Rank TLS versions so a lowered minimum can be detected (`TlsVersion` does
 /// not implement `Ord`).
 fn tls_rank(v: &TlsVersion) -> u8 {
@@ -708,8 +741,6 @@ mod tests {
     #[test]
     fn reordered_match_conditions_are_not_a_delta() {
         // Behavioral equality: reordering match conditions must NOT diff.
-        // (Uses a single method value — KDL's `method` node keeps only its
-        // first argument, so multi-value reordering would be a real change.)
         let a = r#"
             system { worker-threads 0 }
             listeners { listener "http" { address "0.0.0.0:8080"  protocol "http" } }
@@ -898,6 +929,38 @@ mod tests {
             d.deltas
                 .iter()
                 .any(|x| x.summary.contains("TLS minimum lowered") && x.severity == Severity::High),
+            "got: {:?}",
+            summaries(&d)
+        );
+    }
+
+    #[test]
+    fn route_failure_mode_flip_is_high() {
+        let open = r#"
+            system { worker-threads 0 }
+            listeners { listener "http" { address "0.0.0.0:8080"  protocol "http" } }
+            routes {
+                route "api" {
+                    priority "normal"
+                    matches { path-prefix "/api" }
+                    upstream "backend"
+                    policies { failure-mode "open" }
+                }
+            }
+            upstreams {
+                upstream "backend" {
+                    target "127.0.0.1:9000" weight=1
+                    load-balancing "round_robin"
+                }
+            }
+        "#;
+        let closed = open.replace("\"open\"", "\"closed\"");
+        let d = diff(&cfg(open), &cfg(&closed));
+        assert!(
+            d.deltas
+                .iter()
+                .any(|x| x.summary.contains("failure-mode open -> closed")
+                    && x.severity == Severity::High),
             "got: {:?}",
             summaries(&d)
         );

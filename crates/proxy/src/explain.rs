@@ -172,16 +172,17 @@ pub fn explain(config: &Config, request: &ExplainRequest) -> anyhow::Result<Expl
         RouteMatcher::with_cache_size(config.routes.clone(), None, config.server.route_cache_size)?;
 
     // Mirror production: the router matches against the query-stripped path
-    // (`uri.path()`), never the raw path-and-query. So a `--path` that includes
-    // a `?query` routes exactly as it would in the running proxy.
-    let bare_path = request
+    // (`uri.path()`) and parses query params from `uri.query()`. Split a
+    // `--path` that includes a `?query` the same way, so it routes exactly as it
+    // would in the running proxy — including `query-param` match conditions.
+    let (bare_path, query) = request
         .path
         .split_once('?')
-        .map_or(request.path.as_str(), |(p, _)| p);
+        .map_or((request.path.as_str(), ""), |(p, q)| (p, q));
 
     let req = RequestInfo::new(&request.method, bare_path, &request.host)
         .with_headers(request.headers.clone())
-        .with_query_params(RequestInfo::parse_query_params(bare_path));
+        .with_query_params(RequestInfo::parse_query_string(query));
 
     let trace = matcher.explain_request(&req);
 
@@ -476,7 +477,10 @@ mod tests {
                 matches { path-prefix "/api" }
                 upstream "backend"
                 filters "cors"
-                policies { timeout-secs 7  failure-mode "open" }
+                policies {
+                    timeout-secs 7
+                    failure-mode "open"
+                }
             }
             route "wide" {
                 priority "low"
@@ -523,13 +527,10 @@ mod tests {
         assert!(!m.filters[0].is_agent);
         assert!(!m.filters[0].undefined);
 
-        // NB: the KDL parser does not populate route-level `timeout-secs` /
-        // `failure-mode` from a `policies` block (it reads only header + cache
-        // policies), so a KDL route always reports no override and the default
-        // fail-closed mode. explain faithfully reflects the *parsed* config —
-        // surfacing exactly this kind of silent drop is the point of the tool.
-        assert_eq!(m.timeout.route_override_secs, None);
-        assert_eq!(m.failure_mode, "closed");
+        // Route-level `timeout-secs` / `failure-mode` from the `policies` block
+        // are honored (parsed from KDL); explain reflects them.
+        assert_eq!(m.timeout.route_override_secs, Some(7));
+        assert_eq!(m.failure_mode, "open");
 
         let up = m.upstream.expect("has upstream");
         assert!(up.defined);
@@ -538,26 +539,65 @@ mod tests {
     }
 
     #[test]
-    fn route_policies_surface_when_set() {
-        // Formats that carry route policies (JSON/TOML), or a future KDL fix,
-        // populate `RoutePolicies`. Simulate that by setting them directly and
-        // confirm explain reports the override and fail-open mode.
+    fn route_policies_reflect_current_values() {
+        // explain reports whatever `RoutePolicies` currently holds, regardless
+        // of source. Set values distinct from the config's KDL to prove it reads
+        // the live struct, not a hardcoded default.
         let mut config = Config::from_kdl(CONFIG_MULTI).unwrap();
         let api = config
             .routes
             .iter_mut()
             .find(|r| r.id == "api")
             .expect("api route exists");
-        api.policies.timeout_secs = Some(7);
-        api.policies.failure_mode = FailureMode::Open;
+        api.policies.timeout_secs = Some(99);
+        api.policies.failure_mode = FailureMode::Closed;
 
         let report = explain(&config, &req("GET", "/api/users", "example.com")).unwrap();
         let m = report.matched.as_ref().expect("should match");
-        assert_eq!(m.timeout.route_override_secs, Some(7));
-        assert_eq!(m.failure_mode, "open");
+        assert_eq!(m.timeout.route_override_secs, Some(99));
+        assert_eq!(m.failure_mode, "closed");
 
         // Text render reflects the override branch.
         assert!(report.render_text().contains("route override"));
+    }
+
+    #[test]
+    fn query_param_route_matches_via_path_query() {
+        // A `--path` carrying a query string routes to a `query-param` route,
+        // exactly as the running proxy would (both source params from the query).
+        let config = Config::from_kdl(
+            r#"
+            system { worker-threads 0 }
+            listeners { listener "http" { address "0.0.0.0:8080"  protocol "http" } }
+            routes {
+                route "beta" {
+                    priority "high"
+                    matches { query-param "flag" "on" }
+                    upstream "backend"
+                }
+                route "wide" {
+                    priority "low"
+                    matches { path-prefix "/" }
+                    upstream "backend"
+                }
+            }
+            upstreams {
+                upstream "backend" {
+                    target "127.0.0.1:9000" weight=1
+                    load-balancing "round_robin"
+                }
+            }
+        "#,
+        )
+        .unwrap();
+
+        // With ?flag=on the beta route wins.
+        let hit = explain(&config, &req("GET", "/x?flag=on", "example.com")).unwrap();
+        assert_eq!(hit.matched.expect("match").id, "beta");
+
+        // Without it, the catch-all handles the request.
+        let miss = explain(&config, &req("GET", "/x?flag=off", "example.com")).unwrap();
+        assert_eq!(miss.matched.expect("match").id, "wide");
     }
 
     #[test]

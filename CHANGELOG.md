@@ -64,6 +64,38 @@ for details.
 
 ## [Unreleased]
 
+### Added
+
+- `zentinel explain` — dry-run request decision trace (matched route + what it
+  beat, filter/agent chain, timeout, failure mode, upstream).
+- `zentinel diff <old> <new>` — semantic (behavioral) config diff for CI gating;
+  exit `2` on high-severity changes.
+- Lint rules: unreachable route (shadowing), agent filter without explicit
+  failure-mode, shadow traffic to a production upstream.
+
+### Fixed
+
+- KDL parser now honors route `policies { timeout-secs … failure-mode … }`
+  (previously silently dropped — routes always ran fail-closed with no timeout
+  override).
+- KDL `method "GET" "POST"` now matches every listed method (previously kept
+  only the first argument).
+- Query-parameter route conditions (`matches { query-param … }`) now match:
+  the router sourced query params from the already-stripped `uri.path()`; it
+  now reads `uri.query()`.
+
+> **⚠ Behavior change on upgrade.** These were silent drops, so fixing them
+> changes runtime behavior for configs that already used the affected syntax:
+> - A route with `policies { failure-mode "open" }` now actually fails **open**
+>   (it previously ran fail-closed regardless). Review routes that rely on
+>   fail-closed and set `failure-mode "closed"` explicitly if needed.
+> - A route with `method "GET" "POST"` now accepts POST as well as GET.
+> - A route with a `query-param` condition now matches when the parameter is
+>   present (it previously never matched).
+>
+> Not yet parsed from KDL: the remaining route `policies` fields (`rate-limit`,
+> request/response buffering, `max-body-size`).
+
 ---
 
 ## [26.08_1] - 2026-08-08

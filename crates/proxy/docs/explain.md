@@ -76,21 +76,15 @@ No route matched.
   applied; a request matching no global route is reported as no-match even if a
   listener would fall back to a default. This is stated in the output so nothing
   is silently implied.
-- explain reports the **parsed** configuration exactly as the proxy sees it. If
-  a config format drops a field, explain shows the dropped-to value — which is
-  the point. Known example: the KDL parser does not currently populate a route's
-  `policies { timeout-secs … failure-mode … }`; such routes report no timeout
-  override and the default `closed` failure mode. JSON/TOML configs carry these
-  through.
+- explain reports the **parsed** configuration exactly as the proxy sees it, so
+  it also surfaces fields a config format does not carry. The KDL parser honors
+  a route's `policies { timeout-secs … failure-mode … }`, but not the remaining
+  policy fields (`rate-limit`, request/response buffering, `max-body-size`) —
+  explain shows their defaults for KDL configs.
 - explain mirrors production's request construction: the router matches against
-  the **query-stripped** path (`uri.path()`). A `--path` with a `?query` routes
-  as its bare path would. Note a code-path quirk this preserves: the router
-  parses query parameters from that same already-stripped path
-  (`http_trait.rs` sets `ctx.path = uri.path()`, then
-  `parse_query_params(&ctx.path)`), so the params map is empty and a route with
-  a `query-param` condition never matches — in production *or* explain. Such a
-  route therefore renders as rejected (`query '…' did not match`) even when you
-  pass the parameter; that is faithful, not an explain defect.
+  the **query-stripped** path (`uri.path()`) and evaluates `query-param`
+  conditions from `uri.query()`. A `--path` with a `?query` therefore routes
+  exactly as the running proxy would, query-param matches included.
 
 ## Implementation
 

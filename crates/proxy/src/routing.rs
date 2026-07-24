@@ -806,31 +806,46 @@ impl<'a> RequestInfo<'a> {
         })
     }
 
-    /// Parse query parameters from path (only call when needed)
+    /// Parse query parameters from a path that may contain a `?query`.
+    ///
+    /// Convenience wrapper over [`parse_query_string`](Self::parse_query_string)
+    /// for callers that hold a full path-and-query. Note that `http::Uri::path()`
+    /// strips the query, so route-matching callers should pass `uri.query()` to
+    /// `parse_query_string` directly rather than the bare path here.
     pub fn parse_query_params(path: &str) -> HashMap<String, String> {
+        match path.find('?') {
+            Some(i) => Self::parse_query_string(&path[i + 1..]),
+            None => HashMap::new(),
+        }
+    }
+
+    /// Parse a raw query string — the part after `?`, e.g. `a=1&b=2` — into a
+    /// map of decoded key/value pairs. A bare key (no `=`) maps to an empty
+    /// value.
+    pub fn parse_query_string(query: &str) -> HashMap<String, String> {
         let mut params = HashMap::new();
-        if let Some(query_start) = path.find('?') {
-            let query = &path[query_start + 1..];
-            for pair in query.split('&') {
-                if let Some(eq_pos) = pair.find('=') {
-                    let key = &pair[..eq_pos];
-                    let value = &pair[eq_pos + 1..];
-                    params.insert(
-                        urlencoding::decode(key)
-                            .unwrap_or_else(|_| key.into())
-                            .into_owned(),
-                        urlencoding::decode(value)
-                            .unwrap_or_else(|_| value.into())
-                            .into_owned(),
-                    );
-                } else {
-                    params.insert(
-                        urlencoding::decode(pair)
-                            .unwrap_or_else(|_| pair.into())
-                            .into_owned(),
-                        String::new(),
-                    );
-                }
+        if query.is_empty() {
+            return params;
+        }
+        for pair in query.split('&') {
+            if let Some(eq_pos) = pair.find('=') {
+                let key = &pair[..eq_pos];
+                let value = &pair[eq_pos + 1..];
+                params.insert(
+                    urlencoding::decode(key)
+                        .unwrap_or_else(|_| key.into())
+                        .into_owned(),
+                    urlencoding::decode(value)
+                        .unwrap_or_else(|_| value.into())
+                        .into_owned(),
+                );
+            } else {
+                params.insert(
+                    urlencoding::decode(pair)
+                        .unwrap_or_else(|_| pair.into())
+                        .into_owned(),
+                    String::new(),
+                );
             }
         }
         params
@@ -1167,7 +1182,7 @@ mod tests {
     }
 
     #[test]
-    fn query_param_condition_is_inert_under_prod_style_construction() {
+    fn query_param_condition_matches_when_query_is_sourced() {
         // A route that matches on a query parameter.
         let route = create_test_route(
             "q",
@@ -1178,31 +1193,19 @@ mod tests {
         );
         let matcher = RouteMatcher::new(vec![route], None).unwrap();
 
-        // Production (and explain, which mirrors it) hands the router the
-        // query-STRIPPED path and parses query params from that same stripped
-        // path — so the params map is empty and the condition cannot match.
-        // This pins the documented gap: `QueryParam` routing is inert because
-        // http_trait.rs sets `ctx.path = uri.path()` then parses params from it.
-        let stripped = "/search"; // uri.path() form: query already removed
-        let prod_style = RequestInfo::new("GET", stripped, "example.com")
-            .with_query_params(RequestInfo::parse_query_params(stripped));
-        assert!(matcher.explain_request(&prod_style).winner().is_none());
-
-        // The condition itself is sound: given populated params it matches, so
-        // the gap is in how params are sourced, not in the matcher.
-        let mut params = HashMap::new();
-        params.insert("flag".to_string(), "1".to_string());
-        let with_params =
-            RequestInfo::new("GET", stripped, "example.com").with_query_params(params);
+        // Production (and explain) source query params from `uri.query()` via
+        // `parse_query_string` — the path is `uri.path()`, query-stripped. Given
+        // the raw query, the `query-param` condition matches.
+        let req = RequestInfo::new("GET", "/search", "example.com")
+            .with_query_params(RequestInfo::parse_query_string("flag=1&x=2"));
         assert_eq!(
-            matcher
-                .explain_request(&with_params)
-                .winner()
-                .unwrap()
-                .id
-                .as_str(),
+            matcher.explain_request(&req).winner().unwrap().id.as_str(),
             "q"
         );
+
+        // Without the query param present, it does not match.
+        let no_q = RequestInfo::new("GET", "/search", "example.com");
+        assert!(matcher.explain_request(&no_q).winner().is_none());
     }
 
     #[test]
