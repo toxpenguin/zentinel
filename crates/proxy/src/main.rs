@@ -100,6 +100,12 @@ enum Commands {
         /// Skip certificate validation
         #[arg(long = "skip-certs")]
         skip_certs: bool,
+
+        /// Compare the on-disk config against a running proxy and report drift.
+        /// Pass the full URL of the proxy's builtin `/config` admin endpoint,
+        /// e.g. http://127.0.0.1:9090/-/config
+        #[arg(long = "against-running", value_name = "URL")]
+        against_running: Option<String>,
     },
     /// Lint configuration for best practices
     Lint {
@@ -179,11 +185,13 @@ fn main() -> Result<()> {
             skip_network,
             skip_agents,
             skip_certs,
+            against_running,
         }) => validate_config(
             config.as_deref().or(cli.config.as_deref()),
             skip_network,
             skip_agents,
             skip_certs,
+            against_running.as_deref(),
         ),
         Some(Commands::Lint { config }) => lint_config(config.as_deref().or(cli.config.as_deref())),
         Some(Commands::Explain {
@@ -277,6 +285,7 @@ fn validate_config(
     skip_network: bool,
     skip_agents: bool,
     skip_certs: bool,
+    against_running: Option<&str>,
 ) -> Result<()> {
     // Initialize minimal logging
     tracing_subscriber::fmt()
@@ -348,6 +357,11 @@ fn validate_config(
             }
         }
 
+        // Optional drift check against a running proxy (exits 2 on drift).
+        if let Some(url) = against_running {
+            run_drift_check(&rt, url, &config)?;
+        }
+
         std::process::exit(0);
     } else {
         println!("✗ Validation failed\n");
@@ -365,6 +379,87 @@ fn validate_config(
 
         std::process::exit(1);
     }
+}
+
+/// Fingerprint a running proxy reports from its `/config` admin endpoint.
+struct RunningFingerprint {
+    content_hash: String,
+    loaded_at: Option<String>,
+}
+
+/// Compare the local (on-disk) config against a running proxy's fingerprint.
+///
+/// Both sides hash the config through the same [`Config::from_file`] pipeline,
+/// so equal files produce equal hashes. Exits the process with code 2 when they
+/// differ (drift detected), so CI can gate on it. Returns `Err` — which the
+/// caller surfaces as a non-zero (code 1) exit — when the running proxy can't
+/// be reached or its response can't be parsed.
+///
+/// Note: the hash covers the *effective* config (post env-substitution and
+/// include-merge), so environment differences between the proxy's runtime and
+/// this shell will legitimately show as drift.
+fn run_drift_check(rt: &tokio::runtime::Runtime, url: &str, config: &Config) -> Result<()> {
+    let local_hash = zentinel_proxy::config_fingerprint::content_hash(config);
+
+    println!("\nChecking on-disk config against running proxy at {url} ...");
+    let running = rt
+        .block_on(fetch_running_fingerprint(url))
+        .with_context(|| format!("Failed to query running proxy at {url}"))?;
+
+    if running.content_hash == local_hash {
+        println!("✓ On-disk config is in sync with the running proxy");
+        if let Some(loaded_at) = &running.loaded_at {
+            println!("  running config loaded at {loaded_at}");
+        }
+        Ok(())
+    } else {
+        println!("✗ Config drift detected — the running proxy is NOT running this file");
+        println!("  on-disk : {local_hash}");
+        println!("  running : {}", running.content_hash);
+        if let Some(loaded_at) = &running.loaded_at {
+            println!("  running config loaded at {loaded_at}");
+        }
+        println!("\n  Reload the proxy to apply the on-disk config.");
+        std::process::exit(2);
+    }
+}
+
+/// Fetch the `content_hash`/`loaded_at` a running proxy reports.
+async fn fetch_running_fingerprint(url: &str) -> Result<RunningFingerprint> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .context("Failed to build HTTP client")?;
+
+    let body: serde_json::Value = client
+        .get(url)
+        .send()
+        .await
+        .context("request to running proxy failed")?
+        .error_for_status()
+        .context("running proxy returned an error status")?
+        .json()
+        .await
+        .context("running proxy response was not valid JSON")?;
+
+    let content_hash = body
+        .get("content_hash")
+        .and_then(serde_json::Value::as_str)
+        .map(String::from)
+        .context(
+            "running proxy did not report `content_hash` (is the URL its builtin \
+             `/config` admin endpoint, and is the proxy new enough to expose it?)",
+        )?;
+
+    let loaded_at = body
+        .get("loaded_at")
+        .and_then(serde_json::Value::as_str)
+        .map(String::from);
+
+    Ok(RunningFingerprint {
+        content_hash,
+        loaded_at,
+    })
 }
 
 /// Lint configuration for best practices

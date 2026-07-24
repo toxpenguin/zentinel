@@ -350,6 +350,11 @@ cargo run --bin zentinel -- test --config config/zentinel.kdl
 # Validate with connectivity checks (network, agents, certificates)
 cargo run --bin zentinel -- validate --config config/zentinel.kdl
 
+# Detect config drift: compare the on-disk file against a running proxy's
+# builtin /config admin endpoint (CI-gateable; exit 2 on drift, 1 if unreachable)
+cargo run --bin zentinel -- validate --config config/zentinel.kdl \
+    --against-running http://127.0.0.1:9090/-/config
+
 # Lint for best practices
 cargo run --bin zentinel -- lint --config config/zentinel.kdl
 

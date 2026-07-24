@@ -118,6 +118,9 @@ impl ZentinelProxy {
             // Get current config for config dump handler
             let config = Some(self.config_manager.current());
 
+            // Fingerprint of the config last loaded from disk (drift detection)
+            let load_meta = Some(self.config_manager.load_meta());
+
             // Build upstream health snapshot for upstreams handler
             let upstreams = self.build_upstream_health_snapshot().await;
 
@@ -146,6 +149,7 @@ impl ZentinelProxy {
                 &self.builtin_state,
                 &request_id,
                 config,
+                load_meta,
                 upstreams,
                 cache_stats,
                 cache_purge,

@@ -23,7 +23,7 @@ use arc_swap::ArcSwap;
 use notify::{Event, EventKind, RecursiveMode, Watcher};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 use tokio::sync::{broadcast, Mutex, RwLock};
 use tracing::{debug, error, info, trace, warn};
 
@@ -129,10 +129,39 @@ pub struct ReloadStats {
 // Configuration Manager
 // ============================================================================
 
+/// Fingerprint of the configuration last loaded from the config file on disk.
+///
+/// Computed once per successful disk load (startup and file reload), *not* per
+/// request and *not* on programmatic [`ConfigManager::apply_config`] pushes
+/// (the Gateway API controller path) — so it always reflects the on-disk file,
+/// immune to runtime config mutation. This is what `zentinel validate
+/// --against-running` compares against to catch "edited the file, forgot to
+/// reload".
+#[derive(Debug, Clone)]
+pub struct LoadMeta {
+    /// Hex SHA-256 of the canonical JSON of the loaded config (see
+    /// [`crate::config_fingerprint`]).
+    pub content_hash: String,
+    /// Wall-clock time the config was loaded from disk.
+    pub loaded_at: SystemTime,
+}
+
+impl LoadMeta {
+    /// Fingerprint `config` as of now.
+    fn for_config(config: &Config) -> Self {
+        Self {
+            content_hash: crate::config_fingerprint::content_hash(config),
+            loaded_at: SystemTime::now(),
+        }
+    }
+}
+
 /// Configuration manager with hot reload support
 pub struct ConfigManager {
     /// Current active configuration
     current_config: Arc<ArcSwap<Config>>,
+    /// Fingerprint of the config last loaded from disk (drift detection).
+    load_meta: Arc<ArcSwap<LoadMeta>>,
     /// Previous configuration for rollback
     previous_config: Arc<RwLock<Option<Arc<Config>>>>,
     /// Configuration file path
@@ -175,8 +204,11 @@ impl ConfigManager {
             "Creating ArcSwap for configuration"
         );
 
+        let load_meta = Arc::new(ArcSwap::from_pointee(LoadMeta::for_config(&initial_config)));
+
         Ok(Self {
             current_config: Arc::new(ArcSwap::from_pointee(initial_config)),
+            load_meta,
             previous_config: Arc::new(RwLock::new(None)),
             config_path,
             watcher: Arc::new(RwLock::new(None)),
@@ -197,6 +229,15 @@ impl ConfigManager {
     /// Get current configuration
     pub fn current(&self) -> Arc<Config> {
         self.current_config.load_full()
+    }
+
+    /// Get the fingerprint of the config last loaded from disk.
+    ///
+    /// Used by the `/config` admin endpoint and `zentinel validate
+    /// --against-running` for drift detection. Reflects the on-disk file, not
+    /// any runtime mutation applied via [`Self::apply_config`].
+    pub fn load_meta(&self) -> Arc<LoadMeta> {
+        self.load_meta.load_full()
     }
 
     /// Start watching configuration file for changes
@@ -495,6 +536,10 @@ impl ConfigManager {
         // Apply new configuration atomically
         trace!("Applying new configuration atomically");
         self.current_config.store(Arc::new(new_config.clone()));
+        // Record the on-disk fingerprint: this is the file-reload path
+        // (`Config::from_file` above), so it defines the drift baseline.
+        self.load_meta
+            .store(Arc::new(LoadMeta::for_config(&new_config)));
 
         // Run post-reload hooks
         let hooks = self.reload_hooks.read().await;
@@ -817,6 +862,7 @@ impl ConfigManager {
     fn clone_for_task(&self) -> ConfigManager {
         ConfigManager {
             current_config: Arc::clone(&self.current_config),
+            load_meta: Arc::clone(&self.load_meta),
             previous_config: Arc::clone(&self.previous_config),
             config_path: self.config_path.clone(),
             watcher: self.watcher.clone(),

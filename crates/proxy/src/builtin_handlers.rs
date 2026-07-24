@@ -16,6 +16,7 @@ use tracing::{debug, info, trace};
 use zentinel_config::{BuiltinHandler, Config};
 
 use crate::cache::{CacheManager, HttpCacheStats};
+use crate::reload::LoadMeta;
 
 /// Application state for builtin handlers
 pub struct BuiltinHandlerState {
@@ -149,6 +150,7 @@ pub fn execute_handler(
     state: &BuiltinHandlerState,
     request_id: &str,
     config: Option<Arc<Config>>,
+    load_meta: Option<Arc<LoadMeta>>,
     upstreams: Option<UpstreamHealthSnapshot>,
     cache_stats: Option<Arc<HttpCacheStats>>,
     cache_purge: Option<CachePurgeRequest>,
@@ -165,7 +167,7 @@ pub fn execute_handler(
         BuiltinHandler::Health => health_handler(request_id),
         BuiltinHandler::Metrics => metrics_handler(request_id, cache_stats.as_ref()),
         BuiltinHandler::NotFound => not_found_handler(request_id),
-        BuiltinHandler::Config => config_handler(config, request_id),
+        BuiltinHandler::Config => config_handler(config, load_meta, request_id),
         BuiltinHandler::Upstreams => upstreams_handler(upstreams, request_id),
         BuiltinHandler::CachePurge => cache_purge_handler(cache_purge, cache_manager, request_id),
         BuiltinHandler::CacheStats => cache_stats_handler(cache_stats, request_id),
@@ -348,7 +350,11 @@ fn not_found_handler(request_id: &str) -> Response<Full<Bytes>> {
 ///
 /// Returns the current running configuration as JSON. Sensitive fields like
 /// TLS private keys are redacted for security.
-fn config_handler(config: Option<Arc<Config>>, request_id: &str) -> Response<Full<Bytes>> {
+fn config_handler(
+    config: Option<Arc<Config>>,
+    load_meta: Option<Arc<LoadMeta>>,
+    request_id: &str,
+) -> Response<Full<Bytes>> {
     let body = match &config {
         Some(cfg) => {
             // Build a response with configuration details
@@ -357,6 +363,13 @@ fn config_handler(config: Option<Arc<Config>>, request_id: &str) -> Response<Ful
             let response = serde_json::json!({
                 "timestamp": chrono::Utc::now().to_rfc3339(),
                 "request_id": request_id,
+                // Drift-detection fingerprint of the config last loaded from
+                // disk (see `zentinel validate --against-running`). This is a
+                // hash only — no config content or secrets are exposed by it.
+                "content_hash": load_meta.as_ref().map(|m| m.content_hash.clone()),
+                "loaded_at": load_meta
+                    .as_ref()
+                    .map(|m| chrono::DateTime::<chrono::Utc>::from(m.loaded_at).to_rfc3339()),
                 "config": {
                     "server": &cfg.server,
                     "listeners": cfg.listeners.iter().map(|l| {
@@ -810,7 +823,7 @@ mod tests {
     #[test]
     fn test_config_handler_with_config() {
         let config = Arc::new(Config::default_for_testing());
-        let response = config_handler(Some(config), "test-request-id");
+        let response = config_handler(Some(config), None, "test-request-id");
         assert_eq!(response.status(), StatusCode::OK);
 
         let content_type = response.headers().get("Content-Type").unwrap();
@@ -819,8 +832,28 @@ mod tests {
 
     #[test]
     fn test_config_handler_without_config() {
-        let response = config_handler(None, "test-request-id");
+        let response = config_handler(None, None, "test-request-id");
         assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    #[tokio::test]
+    async fn test_config_handler_exposes_content_hash_at_top_level() {
+        use http_body_util::BodyExt;
+
+        let config = Arc::new(Config::default_for_testing());
+        let meta = Arc::new(LoadMeta {
+            content_hash: "deadbeefcafe".to_string(),
+            loaded_at: std::time::SystemTime::now(),
+        });
+
+        let response = config_handler(Some(config), Some(meta), "req-1");
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // The drift-check CLI reads `content_hash` at the JSON top level.
+        let bytes = response.into_body().collect().await.unwrap().to_bytes();
+        let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(json["content_hash"], "deadbeefcafe");
+        assert!(json["loaded_at"].is_string(), "loaded_at should be RFC3339");
     }
 
     #[test]

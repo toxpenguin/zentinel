@@ -47,6 +47,7 @@ pub mod agents;
 pub mod app;
 pub mod builtin_handlers;
 pub mod cache;
+pub mod config_fingerprint;
 pub mod decompression;
 pub mod discovery;
 pub mod disk_cache;
