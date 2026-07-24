@@ -208,8 +208,11 @@ impl BinaryRequestHeaders {
         let header_count: usize = self.headers.values().map(|v| v.len()).sum();
         buf.put_u16(header_count as u16);
 
-        // Headers (flattened: each value gets its own entry)
-        for (name, values) in &self.headers {
+        // Headers (flattened: each value gets its own entry). Sort by name so
+        // encoding is deterministic — HashMap iteration order is not.
+        let mut entries: Vec<(&String, &Vec<String>)> = self.headers.iter().collect();
+        entries.sort_by(|a, b| a.0.cmp(b.0));
+        for (name, values) in entries {
             for value in values {
                 put_string(&mut buf, name);
                 put_string(&mut buf, value);
@@ -368,7 +371,10 @@ impl BinaryAgentResponse {
                 let h_count = headers.as_ref().map(|h| h.len()).unwrap_or(0);
                 buf.put_u16(h_count as u16);
                 if let Some(headers) = headers {
-                    for (k, v) in headers {
+                    // Sort by name for deterministic encoding (HashMap order is not).
+                    let mut pairs: Vec<(&String, &String)> = headers.iter().collect();
+                    pairs.sort_by(|a, b| a.0.cmp(b.0));
+                    for (k, v) in pairs {
                         put_string(&mut buf, k);
                         put_string(&mut buf, v);
                     }
@@ -386,7 +392,10 @@ impl BinaryAgentResponse {
                 buf.put_u8(3);
                 put_string(&mut buf, challenge_type);
                 buf.put_u16(params.len() as u16);
-                for (k, v) in params {
+                // Sort by name for deterministic encoding (HashMap order is not).
+                let mut pairs: Vec<(&String, &String)> = params.iter().collect();
+                pairs.sort_by(|a, b| a.0.cmp(b.0));
+                for (k, v) in pairs {
                     put_string(&mut buf, k);
                     put_string(&mut buf, v);
                 }
@@ -703,6 +712,52 @@ mod tests {
         assert_eq!(
             decoded.headers.get("content-type").unwrap(),
             &vec!["application/json".to_string()]
+        );
+    }
+
+    #[test]
+    fn test_binary_request_headers_encode_is_deterministic() {
+        // With several header names, an unsorted encoder would re-serialize a
+        // decoded frame (fresh HashMap, different seed) in a different order.
+        let mut h = HashMap::new();
+        for name in ["content-type", "a", "z", "m", "b", "x-custom", "d"] {
+            h.insert(name.to_string(), vec!["v".to_string()]);
+        }
+        let x = BinaryRequestHeaders {
+            correlation_id: "r".to_string(),
+            method: "GET".to_string(),
+            uri: "/".to_string(),
+            headers: h,
+            client_ip: "127.0.0.1".to_string(),
+            client_port: 80,
+        };
+        let e1 = x.encode();
+        let e2 = BinaryRequestHeaders::decode(e1.clone()).unwrap().encode();
+        assert_eq!(e1, e2, "encode must be stable across a decode round-trip");
+    }
+
+    #[test]
+    fn test_binary_agent_response_block_headers_deterministic() {
+        let mut bh = HashMap::new();
+        for name in ["retry-after", "x-a", "x-z", "x-m", "location"] {
+            bh.insert(name.to_string(), "v".to_string());
+        }
+        let x = BinaryAgentResponse {
+            correlation_id: "r".to_string(),
+            decision: Decision::Block {
+                status: 403,
+                body: Some("no".to_string()),
+                headers: Some(bh),
+            },
+            request_headers: vec![],
+            response_headers: vec![],
+            needs_more: false,
+        };
+        let e1 = x.encode();
+        let e2 = BinaryAgentResponse::decode(e1.clone()).unwrap().encode();
+        assert_eq!(
+            e1, e2,
+            "block-headers encode must be stable across a round-trip"
         );
     }
 

@@ -86,6 +86,10 @@ for details.
 - Query-parameter route conditions (`matches { query-param … }`) now match:
   the router sourced query params from the already-stripped `uri.path()`; it
   now reads `uri.query()`.
+- v2 agent-protocol binary frames now encode **deterministically** — header and
+  param maps are sorted by key before serialization, so the same logical frame
+  always produces the same bytes (previously `HashMap` iteration order made
+  encoding non-deterministic). Surfaced by the new fuzz targets.
 
 > **⚠ Behavior change on upgrade.** These were silent drops, so fixing them
 > changes runtime behavior for configs that already used the affected syntax:

@@ -37,14 +37,11 @@ cargo +nightly fuzz tmin <target> fuzz/artifacts/<target>/<crash-file>
 
 CI runs each target nightly (bounded) via `.github/workflows/fuzz.yml`.
 
-## Known finding (not yet fixed)
+## Round-trip invariant
 
-The v2 encoders serialize header maps in **`HashMap` iteration order**, so
-encoding the same logical frame twice can produce different bytes
-(`BinaryRequestHeaders::encode` at `binary.rs`, and the `Decision::Block` /
-`Decision::Challenge` header/param maps in `BinaryAgentResponse::encode`). The
-decoders are order-independent, so this is semantically benign for HTTP, but the
-non-canonical encoding breaks byte-level reproducibility (frame hashing/caching,
-signing) and prevents a `decode(encode(x))` round-trip invariant. Fix: sort map
-entries by key before encoding — then a round-trip stability assertion can be
-added to these targets.
+The agent targets also assert encode/decode **symmetry**: a successfully decoded
+frame, re-encoded and decoded again, yields identical bytes. This requires
+deterministic encoding — the v2 encoders sort header/param maps by key before
+serializing (`binary.rs`), so `HashMap` iteration order can no longer make the
+same logical frame encode to different bytes. (This invariant was originally
+surfaced by these fuzz targets and is now enforced.)
