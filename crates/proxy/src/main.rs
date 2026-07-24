@@ -108,6 +108,33 @@ enum Commands {
         config: Option<String>,
     },
 
+    /// Explain how a synthetic request would route (dry-run, no server)
+    Explain {
+        /// Configuration file to explain against
+        #[arg(short = 'c', long = "config")]
+        config: Option<String>,
+
+        /// HTTP method
+        #[arg(short = 'm', long = "method", default_value = "GET")]
+        method: String,
+
+        /// Request path (e.g. /api/users)
+        #[arg(short = 'p', long = "path", default_value = "/")]
+        path: String,
+
+        /// Host header value (overrides a `host=` entry in --header)
+        #[arg(long = "host")]
+        host: Option<String>,
+
+        /// Additional request header, repeatable: --header name=value
+        #[arg(long = "header", value_name = "NAME=VALUE")]
+        header: Vec<String>,
+
+        /// Emit JSON instead of human-readable text
+        #[arg(long = "json")]
+        json: bool,
+    },
+
     /// Manage bundled agents (install, status, update)
     Bundle(BundleArgs),
 }
@@ -144,6 +171,21 @@ fn main() -> Result<()> {
             skip_certs,
         ),
         Some(Commands::Lint { config }) => lint_config(config.as_deref().or(cli.config.as_deref())),
+        Some(Commands::Explain {
+            config,
+            method,
+            path,
+            host,
+            header,
+            json,
+        }) => explain_request_cmd(
+            config.as_deref().or(cli.config.as_deref()),
+            &method,
+            &path,
+            host.as_deref(),
+            &header,
+            json,
+        ),
         Some(Commands::Bundle(args)) => {
             // Initialize minimal logging for bundle commands
             tracing_subscriber::fmt()
@@ -353,6 +395,89 @@ fn lint_config(config_path: Option<&str>) -> Result<()> {
         // Lint exits with 0 even with warnings (they're recommendations)
         std::process::exit(0);
     }
+}
+
+/// Explain how a synthetic request would route through the configuration.
+///
+/// Pure dry-run over the global route matcher: no listener is bound and no
+/// network I/O occurs. Prints the matched route, what it beat, the ordered
+/// filter/agent chain, effective timeout, failure mode, and upstream policy.
+fn explain_request_cmd(
+    config_path: Option<&str>,
+    method: &str,
+    path: &str,
+    host: Option<&str>,
+    headers: &[String],
+    json: bool,
+) -> Result<()> {
+    use std::collections::HashMap;
+    use zentinel_proxy::explain::{explain, ExplainRequest};
+
+    // Logs go to stderr so the report (stdout) stays clean — critical for
+    // `--json` piping. The default fmt writer is stdout, so set it explicitly.
+    tracing_subscriber::fmt()
+        .with_target(false)
+        .with_level(true)
+        .with_writer(std::io::stderr)
+        .init();
+
+    let config = match config_path {
+        Some(path) => {
+            info!("Explaining against configuration file: {}", path);
+            Config::from_file(path).context("Failed to load configuration file")?
+        }
+        None => {
+            info!("Explaining against embedded default configuration");
+            Config::default_embedded().context("Failed to load embedded configuration")?
+        }
+    };
+
+    config
+        .validate()
+        .context("Configuration schema validation failed")?;
+
+    // Parse `name=value` headers (keys lower-cased to match route conditions).
+    let mut header_map: HashMap<String, String> = HashMap::new();
+    for raw in headers {
+        match raw.split_once('=') {
+            Some((name, value)) => {
+                header_map.insert(name.trim().to_lowercase(), value.trim().to_string());
+            }
+            None => {
+                anyhow::bail!("invalid --header '{raw}' (expected name=value)");
+            }
+        }
+    }
+
+    // Host precedence: explicit --host, then a `host=` header, then empty.
+    let host = host
+        .map(str::to_string)
+        .or_else(|| header_map.get("host").cloned())
+        .unwrap_or_default();
+
+    let request = ExplainRequest {
+        method: method.to_uppercase(),
+        path: path.to_string(),
+        host,
+        headers: header_map,
+    };
+
+    let report = explain(&config, &request).context("Failed to explain request")?;
+
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&report).context("Failed to serialize report")?
+        );
+    } else {
+        print!("{}", report.render_text());
+    }
+
+    // Exit non-zero when nothing matched, so scripts can gate on routability.
+    if report.no_match {
+        std::process::exit(1);
+    }
+    Ok(())
 }
 
 /// State produced by ACME initialization, used to wire components into the proxy

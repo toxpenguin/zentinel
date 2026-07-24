@@ -294,6 +294,55 @@ impl RouteMatcher {
         None
     }
 
+    /// Explain how a request routes, evaluating **every** route.
+    ///
+    /// Unlike [`match_request`](Self::match_request), this never short-circuits
+    /// on the first match and never consults the route cache. It returns the
+    /// full ordered evaluation so callers can show the winning route *and*
+    /// every route it beat — the basis for the `zentinel explain` subcommand.
+    ///
+    /// Routes are evaluated in the same order `match_request` uses (priority
+    /// descending, then specificity descending), so the reported winner is
+    /// identical to what a live request would select.
+    #[must_use]
+    pub fn explain_request(&self, req: &RequestInfo<'_>) -> ExplainTrace {
+        let mut evaluations = Vec::with_capacity(self.routes.len());
+        let mut winner = None;
+
+        for (index, route) in self.routes.iter().enumerate() {
+            let reject_reason = route.explain_match(req).err();
+            let matched = reject_reason.is_none();
+            if matched && winner.is_none() {
+                winner = Some(index);
+            }
+            evaluations.push(RouteEvaluation {
+                id: route.id.clone(),
+                priority: route.priority,
+                specificity: route.specificity(),
+                matched,
+                reject_reason,
+            });
+        }
+
+        // No explicit match: fall back to the configured default route, which
+        // already appears (unmatched) in `evaluations`.
+        let mut used_default = false;
+        if winner.is_none() {
+            if let Some(ref default_id) = self.default_route {
+                if let Some(idx) = evaluations.iter().position(|e| e.id == *default_id) {
+                    winner = Some(idx);
+                    used_default = true;
+                }
+            }
+        }
+
+        ExplainTrace {
+            evaluations,
+            winner,
+            used_default,
+        }
+    }
+
     /// Find a route by ID
     fn find_route_by_id(&self, id: &RouteId) -> Option<&CompiledRoute> {
         self.routes.iter().find(|r| r.id == *id)
@@ -440,6 +489,39 @@ impl CompiledRoute {
 
         path_score + host_score + condition_score
     }
+
+    /// Like [`matches`](Self::matches) but returns *why* the route was rejected.
+    ///
+    /// `Ok(())` means the route matches. `Err(reason)` describes the first
+    /// failing condition (or the unmatched host set). This mirrors `matches`
+    /// exactly — same host OR / non-host AND semantics — so the winner reported
+    /// by an explain trace is identical to a live match.
+    fn explain_match(&self, req: &RequestInfo<'_>) -> Result<(), String> {
+        let mut has_host_matchers = false;
+        let mut any_host_matched = false;
+
+        for matcher in &self.matchers {
+            match matcher {
+                CompiledMatcher::Host(_) => {
+                    has_host_matchers = true;
+                    if matcher.matches(req) {
+                        any_host_matched = true;
+                    }
+                }
+                _ => {
+                    if !matcher.matches(req) {
+                        return Err(format!("{} did not match", matcher.describe()));
+                    }
+                }
+            }
+        }
+
+        if has_host_matchers && !any_host_matched {
+            return Err(format!("no host condition matched host '{}'", req.host));
+        }
+
+        Ok(())
+    }
 }
 
 impl CompiledMatcher {
@@ -476,6 +558,25 @@ impl CompiledMatcher {
                     false
                 }
             }
+        }
+    }
+
+    /// Human-readable description of this condition, for explain output.
+    fn describe(&self) -> String {
+        match self {
+            Self::Path(path) => format!("path == '{path}'"),
+            Self::PathPrefix(prefix) => format!("path-prefix '{prefix}'"),
+            Self::PathRegex(regex) => format!("path-regex /{}/", regex.as_str()),
+            Self::Host(_) => "host".to_string(),
+            Self::Header { name, value } => match value {
+                Some(v) => format!("header '{name}: {v}'"),
+                None => format!("header '{name}' present"),
+            },
+            Self::Method(methods) => format!("method in [{}]", methods.join(", ")),
+            Self::QueryParam { name, value } => match value {
+                Some(v) => format!("query '{name}={v}'"),
+                None => format!("query '{name}' present"),
+            },
         }
     }
 }
@@ -765,6 +866,64 @@ impl RouteMatch {
     }
 }
 
+/// Evaluation of a single route within an [`ExplainTrace`].
+#[derive(Debug, Clone)]
+pub struct RouteEvaluation {
+    /// Route identifier.
+    pub id: RouteId,
+    /// Route priority (higher routes are evaluated first).
+    pub priority: Priority,
+    /// Tie-break specificity score (higher wins at equal priority).
+    pub specificity: u32,
+    /// Whether this route matched the request.
+    pub matched: bool,
+    /// If the route did not match, why — the first failing condition, or the
+    /// unmatched host set. `None` when the route matched.
+    pub reject_reason: Option<String>,
+}
+
+/// Full trace of how a request routes, produced by
+/// [`RouteMatcher::explain_request`].
+///
+/// `evaluations` are in evaluation order (priority then specificity, both
+/// descending). `winner` indexes the selected route within `evaluations`, if
+/// any.
+#[derive(Debug, Clone)]
+pub struct ExplainTrace {
+    /// Every configured route, in evaluation order.
+    pub evaluations: Vec<RouteEvaluation>,
+    /// Index into `evaluations` of the winning route, if one was selected.
+    pub winner: Option<usize>,
+    /// Whether the winner is the configured default route (no explicit match).
+    pub used_default: bool,
+}
+
+impl ExplainTrace {
+    /// The winning route evaluation, if a route matched (or a default applied).
+    #[must_use]
+    pub fn winner(&self) -> Option<&RouteEvaluation> {
+        self.winner.map(|i| &self.evaluations[i])
+    }
+
+    /// Routes that also matched but lost to the winner on priority/specificity —
+    /// the "what it beat" set for explain output.
+    ///
+    /// Empty when nothing matched, when the winner is the only match, or when a
+    /// default route was applied (no route actually matched).
+    #[must_use]
+    pub fn beaten(&self) -> Vec<&RouteEvaluation> {
+        let Some(win) = self.winner else {
+            return Vec::new();
+        };
+        self.evaluations
+            .iter()
+            .enumerate()
+            .filter(|(i, e)| *i != win && e.matched)
+            .map(|(_, e)| e)
+            .collect()
+    }
+}
+
 /// Cache statistics
 #[derive(Debug, Clone)]
 pub struct CacheStats {
@@ -913,6 +1072,137 @@ mod tests {
 
         let result = matcher.match_request(&req).unwrap();
         assert_eq!(result.route_id.as_str(), "high");
+    }
+
+    #[test]
+    fn explain_records_winner_and_beaten_routes() {
+        // Two routes both match /api/*; higher priority wins, lower is "beaten".
+        let mut low =
+            create_test_route("low", vec![MatchCondition::PathPrefix("/api".to_string())]);
+        low.priority = Priority::LOW;
+        let mut high =
+            create_test_route("high", vec![MatchCondition::PathPrefix("/api".to_string())]);
+        high.priority = Priority::HIGH;
+
+        let matcher = RouteMatcher::new(vec![low, high], None).unwrap();
+        let req = RequestInfo::new("GET", "/api/users", "example.com");
+
+        let trace = matcher.explain_request(&req);
+        assert_eq!(trace.winner().unwrap().id.as_str(), "high");
+        let beaten: Vec<_> = trace.beaten().iter().map(|e| e.id.as_str()).collect();
+        assert_eq!(beaten, vec!["low"]);
+    }
+
+    #[test]
+    fn explain_reports_reject_reason_for_nonmatch() {
+        let route = create_test_route("api", vec![MatchCondition::PathPrefix("/api".to_string())]);
+        let matcher = RouteMatcher::new(vec![route], None).unwrap();
+        let req = RequestInfo::new("GET", "/other", "example.com");
+
+        let trace = matcher.explain_request(&req);
+        assert!(trace.winner().is_none());
+        let eval = &trace.evaluations[0];
+        assert!(!eval.matched);
+        assert!(eval
+            .reject_reason
+            .as_deref()
+            .unwrap()
+            .contains("path-prefix"));
+    }
+
+    #[test]
+    fn explain_winner_matches_live_match_request() {
+        // Parity guarantee: explain's winner == match_request's result.
+        let routes = vec![
+            create_test_route(
+                "exact",
+                vec![MatchCondition::Path("/api/v1/users".to_string())],
+            ),
+            create_test_route(
+                "prefix",
+                vec![MatchCondition::PathPrefix("/api".to_string())],
+            ),
+        ];
+        let matcher = RouteMatcher::new(routes, None).unwrap();
+        let req = RequestInfo::new("GET", "/api/v1/users", "example.com");
+
+        let live = matcher.match_request(&req).unwrap();
+        let trace = matcher.explain_request(&req);
+        assert_eq!(trace.winner().unwrap().id, live.route_id);
+        assert_eq!(trace.winner().unwrap().id.as_str(), "exact");
+    }
+
+    #[test]
+    fn explain_never_consults_cache() {
+        // Warm the cache via match_request, then confirm explain still evaluates
+        // every route and reports the same winner.
+        let routes = vec![
+            create_test_route("a", vec![MatchCondition::PathPrefix("/a".to_string())]),
+            create_test_route("b", vec![MatchCondition::PathPrefix("/b".to_string())]),
+        ];
+        let matcher = RouteMatcher::new(routes, None).unwrap();
+        let req = RequestInfo::new("GET", "/a/x", "example.com");
+
+        let _ = matcher.match_request(&req); // warm cache
+        let trace = matcher.explain_request(&req);
+        assert_eq!(trace.evaluations.len(), 2);
+        assert_eq!(trace.winner().unwrap().id.as_str(), "a");
+    }
+
+    #[test]
+    fn explain_uses_default_route_when_no_match() {
+        let route = create_test_route(
+            "fallback",
+            vec![MatchCondition::Host("only.example.com".to_string())],
+        );
+        let matcher = RouteMatcher::new(vec![route], Some("fallback".to_string())).unwrap();
+        let req = RequestInfo::new("GET", "/", "other.example.com");
+
+        let trace = matcher.explain_request(&req);
+        assert!(trace.used_default);
+        assert_eq!(trace.winner().unwrap().id.as_str(), "fallback");
+        // The default applied because nothing actually matched.
+        assert!(!trace.winner().unwrap().matched);
+        assert!(trace.beaten().is_empty());
+    }
+
+    #[test]
+    fn query_param_condition_is_inert_under_prod_style_construction() {
+        // A route that matches on a query parameter.
+        let route = create_test_route(
+            "q",
+            vec![MatchCondition::QueryParam {
+                name: "flag".to_string(),
+                value: Some("1".to_string()),
+            }],
+        );
+        let matcher = RouteMatcher::new(vec![route], None).unwrap();
+
+        // Production (and explain, which mirrors it) hands the router the
+        // query-STRIPPED path and parses query params from that same stripped
+        // path — so the params map is empty and the condition cannot match.
+        // This pins the documented gap: `QueryParam` routing is inert because
+        // http_trait.rs sets `ctx.path = uri.path()` then parses params from it.
+        let stripped = "/search"; // uri.path() form: query already removed
+        let prod_style = RequestInfo::new("GET", stripped, "example.com")
+            .with_query_params(RequestInfo::parse_query_params(stripped));
+        assert!(matcher.explain_request(&prod_style).winner().is_none());
+
+        // The condition itself is sound: given populated params it matches, so
+        // the gap is in how params are sourced, not in the matcher.
+        let mut params = HashMap::new();
+        params.insert("flag".to_string(), "1".to_string());
+        let with_params =
+            RequestInfo::new("GET", stripped, "example.com").with_query_params(params);
+        assert_eq!(
+            matcher
+                .explain_request(&with_params)
+                .winner()
+                .unwrap()
+                .id
+                .as_str(),
+            "q"
+        );
     }
 
     #[test]

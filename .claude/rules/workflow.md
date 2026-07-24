@@ -352,10 +352,18 @@ cargo run --bin zentinel -- validate --config config/zentinel.kdl
 
 # Lint for best practices
 cargo run --bin zentinel -- lint --config config/zentinel.kdl
+
+# Explain how a synthetic request would route (dry-run, no server)
+cargo run --bin zentinel -- explain --config config/zentinel.kdl \
+    --method GET --path /api/users --header host=example.com
 ```
 
 > There are no `--check`/`--dry-run` flags; use the `test`/`validate`/`lint`
 > subcommands (or the `-t/--test` flag, equivalent to `test`).
+>
+> `explain` is a read-only decision trace (matched route + what it beat, filter/
+> agent chain, timeouts, failure mode, upstream); exit `1` on no match. See
+> `crates/proxy/docs/explain.md`.
 
 ### Config Examples
 
