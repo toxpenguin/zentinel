@@ -12,10 +12,13 @@ is **excluded from the workspace** and requires a **nightly** toolchain.
 | `agent_request_headers` | `BinaryRequestHeaders::decode` (v2 wire) | never panics on arbitrary bytes |
 | `agent_body_chunk` | `BinaryBodyChunk::decode` (v2 wire) | never panics on arbitrary bytes |
 | `agent_response` | `BinaryAgentResponse::decode` (v2 wire) | never panics on arbitrary bytes |
+| `proxy_protocol` | `proxy_protocol::parse` — HAProxy PROXY v1/v2 header | never panics; v2 encode/decode round-trips |
 
 The agent-protocol decoders are network-facing, so a decoder panic on crafted
 bytes is a denial-of-service vector; the config parser takes complex,
-untrusted-ish operator input.
+untrusted-ish operator input. The PROXY protocol parser reads bytes straight off
+an accepted connection before any HTTP parsing, so it is directly attacker-facing
+the moment inbound PROXY support is enabled.
 
 ## Running
 

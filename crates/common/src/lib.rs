@@ -12,6 +12,7 @@
 //! - [`observability`]: Metrics, logging, and tracing (runtime only)
 //! - [`circuit_breaker`]: Circuit breaker state machine (runtime only)
 //! - [`registry`]: Generic type-safe registry abstraction (runtime only)
+//! - [`proxy_protocol`]: HAProxy PROXY protocol (v1/v2) header codec
 
 pub mod budget;
 #[cfg(feature = "runtime")]
@@ -22,6 +23,7 @@ pub mod inference;
 pub mod limits;
 #[cfg(feature = "runtime")]
 pub mod observability;
+pub mod proxy_protocol;
 #[cfg(feature = "runtime")]
 pub mod registry;
 #[cfg(feature = "runtime")]
@@ -53,6 +55,9 @@ pub use ids::{AgentId, CorrelationId, QualifiedId, RequestId, RouteId, Scope, Up
 
 // Re-export common types
 pub use types::{CircuitBreakerConfig, TraceIdFormat};
+
+// Re-export PROXY protocol codec
+pub use proxy_protocol::{ProxyHeader, ProxyProtocolError, Transport};
 
 // Re-export inference types
 pub use inference::{

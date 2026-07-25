@@ -69,6 +69,7 @@ Generate KDL from existing `VirtualHost`/`server` blocks: domains → routes (SN
 - **Outbound to backends**: Apache `mod_remoteip`, LiteSpeed, and Imunify360's greylisting/captcha all key on real client IP. Without PROXY protocol (or trusted XFF), every visitor looks like the proxy and IP-based security behind Zentinel breaks or, worse, blocks everyone.
 - **Inbound**: accept PROXY protocol from an upstream LB so Zentinel itself sees real IPs.
 Codebase has `ClientIp.forwarded_for` but no PROXY protocol support. This is the prerequisite for the whole compat story — do it first.
+- **Status (partial):** the pure v1/v2 header **codec** landed in `zentinel-common::proxy_protocol` (encode/decode, fuzzed, no datapath wiring, no config). Datapath integration needs a listener/connector hook in the `zentinelproxy/pingora` fork (current fork exposes none) — inbound decode + outbound emit + config surface remain. See `crates/common/docs/proxy-protocol.md` § "Next slice".
 
 ### 13. ModSecurity-compatible WAF agent (Coraza-based)
 External agent (Go — synergy with SDK idea #6) embedding [Coraza](https://coraza.io) to execute SecLang rulesets: OWASP CRS, Comodo/Imunify360 modsec rule exports, custom vendor rules. Hosting operators keep their existing rule investment while moving WAF enforcement to the edge. Emit ModSecurity audit-log format so existing SIEM/fail2ban pipelines keep working. Fits the architecture exactly: complex WAF logic isolated in a crash-safe external process.
