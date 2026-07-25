@@ -400,16 +400,11 @@ dedicated shadow upstream.
 > perfectly sensible configs (e.g. `config/examples/api-gateway.kdl`).
 >
 > The **agent-timeout half** (agent timeout ≥ route timeout) is also **not
-> viable as specified**. `agent.timeout-ms` is the only enforced agent timeout
-> (it becomes the pool `request_timeout`); the sibling `pool.connect-timeout-ms`
-> and `chunk-timeout-ms` have **no runtime consumers found via a workspace grep**,
-> so comparing against them would warn about knobs that do not take effect. And
-> route `timeout-secs` is a read-phase timeout (above), not a total request
-> budget, so "agent ≥ route" has no enforced meaning. The only both-enforced
-> framing — agent `timeout-ms` vs a listener's `request-timeout-secs` — needs an
-> indirect agent→filter→route→listener mapping (agents are global) and would
-> over-warn where the agent never runs under the tight-budget listener, the same
-> cry-wolf failure that ruled out the route half.
+> viable as specified** — but for a phase reason, not an enforcement one. Route
+> `timeout-secs` is a read-phase timeout (above) while an agent call is a
+> separate, earlier phase, so "agent ≥ route" is not a same-budget inversion.
+> (Agent `timeout-ms` and the `pool { }` block **are** enforced — see the
+> correction below.)
 >
 > Not planned: a **weak-cipher / weak-TLS-minimum** rule. `TlsConfig.cipher_suites`
 > is already flagged a **runtime no-op** by semantic validation — Pingora's TLS
@@ -418,12 +413,22 @@ dedicated shadow upstream.
 > `TlsVersion` admits only `TLS1.2`/`TLS1.3`, so a sub-1.2 minimum cannot be
 > represented in the first place.
 >
-> **Higher-value follow-up:** three timeout/security knobs dead-ended here for
-> the *same* reason — `pool.connect-timeout-ms`, `chunk-timeout-ms` and
-> `cipher_suites` all parse but appear to have no runtime consumers. A generic
-> **"configured-but-unenforced field"** lint (backed by a catalog of which KDL
-> fields are actually wired) would catch that whole class of silent no-ops and is
-> worth more than any single timeout-inversion rule.
+> **Correction (5a audit) — agent timeouts ARE enforced.** An earlier note here
+> claimed the agent `timeout-ms` / `chunk-timeout-ms` / `pool { }` settings had
+> "no runtime consumers" and drafted a no-op warning for them. **That was wrong**
+> and was reverted before shipping. The mistake was methodology: a grep narrowed
+> with `| grep -iE "agent"` dropped the wiring lines (which read `config.timeout_ms`
+> / `p.connect_timeout_ms`, containing no "agent" token), and a code-graph search
+> was capped and run against a stale branch. `crates/proxy/src/agents/agent_v2.rs`
+> converts the config `pool { }` block into the runtime pool config
+> (`connect_timeout ← connect_timeout_ms`, `request_timeout ← timeout_ms`,
+> `drain_timeout ← drain_timeout_ms`, plus reconnect/max/health fields), and
+> `manager.rs` wraps every agent call in `Duration::from_millis(agent.timeout_ms())`.
+> So these fields **take effect**; no warning is warranted. Only `chunk-timeout-ms`
+> is unconfirmed (not part of that conversion) and would need its own trace before
+> any claim. Lesson for a future generic "unenforced-field" lint: prove
+> unenforcement with an unfiltered data-flow trace on the shipping branch — a
+> narrowed grep is not proof.
 
 ## Semantic Diff
 
