@@ -31,6 +31,7 @@ help:
 	@echo "  make test-fail-closed       Test fail-closed mode"
 	@echo "  make test-health-recovery   Test health check recovery"
 	@echo "  make test-memory-stability  Test memory stability under chaos"
+	@echo "  make test-resource-bounds   Test fd/memory bounds under agent failure"
 	@echo ""
 	@echo "Environment management:"
 	@echo "  make up                Start test environment"
@@ -88,12 +89,15 @@ test-health-recovery:
 test-memory-stability:
 	./run-chaos-test.sh --scenario memory-stability --skip-cleanup
 
+test-resource-bounds:
+	./run-chaos-test.sh --scenario resource-bounds --skip-cleanup
+
 # Category targets
 test-agent: test-agent-crash test-agent-timeout test-circuit-breaker
 
 test-upstream: test-backend-crash test-backend-5xx test-all-backends-down
 
-test-resilience: test-fail-open test-fail-closed test-health-recovery test-memory-stability
+test-resilience: test-fail-open test-fail-closed test-health-recovery test-memory-stability test-resource-bounds
 
 # ============================================================================
 # Environment management

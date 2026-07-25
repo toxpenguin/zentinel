@@ -52,6 +52,7 @@ RESILIENCE_SCENARIOS=(
     "resilience/test_fail_closed.sh"
     "resilience/test_health_recovery.sh"
     "resilience/test_memory_stability.sh"
+    "resilience/test_resource_bounds.sh"
 )
 
 QUICK_SCENARIOS=(
@@ -110,7 +111,8 @@ Options:
                        Upstream failures:
                          backend-crash, backend-5xx, all-backends-down
                        Resilience:
-                         fail-open, fail-closed, health-recovery, memory-stability
+                         fail-open, fail-closed, health-recovery, memory-stability,
+                         resource-bounds
 
   --all              Run all scenarios
   --quick            Run quick subset (agent-crash, backend-crash, fail-open, fail-closed)
@@ -151,6 +153,7 @@ get_scenario_path() {
         fail-closed)        echo "resilience/test_fail_closed.sh" ;;
         health-recovery)    echo "resilience/test_health_recovery.sh" ;;
         memory-stability)   echo "resilience/test_memory_stability.sh" ;;
+        resource-bounds)    echo "resilience/test_resource_bounds.sh" ;;
         *)
             log_error "Unknown scenario: $name"
             return 1

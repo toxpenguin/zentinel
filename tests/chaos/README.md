@@ -57,6 +57,7 @@ make test-agent-crash
 | `fail-closed` | Verify traffic blocked when agent fails (fail-closed mode) |
 | `health-recovery` | Test health check detection and recovery |
 | `memory-stability` | Run 20 chaos cycles, verify no memory leaks |
+| `resource-bounds` | Slow-loris, endpoint-vanish, and restart-storm faults; assert fd + memory ceilings hold ("bounded by design") |
 
 ## Usage
 
