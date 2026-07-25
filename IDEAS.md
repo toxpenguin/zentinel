@@ -45,8 +45,9 @@ Each rule = one explicit, explainable warning; fits the existing `lint` subcomma
 ### 6. Official agent SDKs (Go first, then Python)
 The conformance suite is already Go (`conformance/`); the wire knowledge exists. Package it: `zentinel-agent-sdk-go` implementing v2 handshake, framing, drain, health — so third parties write `func OnRequestHeaders(...) Decision` and nothing else. Conformance suite becomes the compliance badge ("passes zentinel-conformance vX"). Grows the external-agent ecosystem, which is the whole architectural bet.
 
-### 7. Agent starter template repo / `zentinel agent new`
+### 7. Agent starter template repo / `zentinel agent new` — ✅ done
 Scaffold generator producing a minimal agent (echo-style, from `agents/echo/`) with Dockerfile, conformance test wiring, and KDL snippet to register it. Lowers the barrier from "read the protocol docs" to "edit one function".
+- Implemented as `zentinel agent new <name>` (`crates/proxy/src/agent_scaffold.rs`): generates a self-contained crate (Cargo.toml with published `zentinel-agent-protocol` dep, `src/main.rs` = one `on_request_headers` to edit, `zentinel-agent.toml`, Dockerfile, README with UDS+gRPC KDL register snippets, `.gitignore`). Dual-transport binary (`--socket`/`--grpc`); overwrite-guarded; name-validated. Deps verified to resolve against crates.io (0.6.22).
 
 ## Operations
 

@@ -25,6 +25,7 @@ use zentinel_config::Config;
 use zentinel_proxy::acme::{
     AcmeClient, AcmeError, CertificateStorage, ChallengeManager, RenewalScheduler,
 };
+use zentinel_proxy::agent_scaffold::{run_agent_command, AgentArgs};
 use zentinel_proxy::bundle::{run_bundle_command, BundleArgs};
 use zentinel_proxy::tls::HotReloadableSniResolver;
 use zentinel_proxy::{ReloadTrigger, SignalManager, SignalType, ZentinelProxy};
@@ -158,6 +159,9 @@ enum Commands {
 
     /// Manage bundled agents (install, status, update)
     Bundle(BundleArgs),
+
+    /// Scaffold and manage external agents (`agent new <name>`)
+    Agent(AgentArgs),
 }
 
 fn main() -> Result<()> {
@@ -218,6 +222,7 @@ fn main() -> Result<()> {
                 .init();
             run_bundle_command(args)
         }
+        Some(Commands::Agent(args)) => run_agent_command(args),
         None => {
             // Default: run the server
             run_server(cli.config, cli.verbose, cli.daemon, cli.upgrade)

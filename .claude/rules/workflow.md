@@ -339,6 +339,27 @@ rust-lldb target/debug/deps/zentinel_proxy-xxx specific_test
 
 ---
 
+## Agent Development
+
+### Scaffold a new external agent
+
+```bash
+# Generate a minimal, self-contained agent crate in ./my-waf/
+cargo run --bin zentinel -- agent new my-waf
+
+# Choose the parent directory; overwrite an existing dir
+cargo run --bin zentinel -- agent new my-waf --path ~/agents --force
+```
+
+Produces a buildable project (`Cargo.toml` on the published
+`zentinel-agent-protocol` crate, `src/main.rs` with one `on_request_headers`
+method to edit, `zentinel-agent.toml`, `Dockerfile`, and a `README.md` with
+UDS + gRPC KDL registration snippets). The generated binary serves over a Unix
+socket (`--socket`) or gRPC (`--grpc`). Implementation:
+`crates/proxy/src/agent_scaffold.rs`; reference agent: `agents/echo/`.
+
+---
+
 ## Configuration Testing
 
 ### Validate Config
