@@ -31,12 +31,13 @@ Release workflow already signs with cosign. Add SBOM generation (syft/cargo-sbom
 ## Config quality
 
 ### 5. New lint rules (lint infra exists in `crates/config/src/validate`)
-Candidate rules to add:
-- **Unreachable route**: route can never match because a higher-priority route fully shadows its matcher set.
-- **Agent without failure-mode**: agent referenced on a route with no explicit open/closed policy.
-- **Timeout inversion**: route timeout shorter than upstream connect timeout, or agent timeout ≥ route timeout.
-- **TLS listener without minimum version / weak cipher config.**
-- **Shadow traffic to production upstream**: `ShadowConfig` target overlaps a primary upstream pool.
+Candidate rules — status after investigation (2026-07-25):
+- **Unreachable route**: route can never match because a higher-priority route fully shadows its matcher set. — ✅ done (`check_unreachable_routes`).
+- **Agent without failure-mode**: agent referenced on a route with no explicit open/closed policy. — ✅ done (`check_agent_filter_failure_modes`).
+- **Timeout inversion**: route timeout shorter than upstream connect timeout, or agent timeout ≥ route timeout. — ❌ route-vs-connect half **not viable**: route `timeout-secs` maps to the upstream *read* timeout (`peer.options.read_timeout`), orthogonal to connect — read < connect is normal, not an inversion (would cry-wolf on `config/examples/api-gateway.kdl`). Agent-timeout half is a genuine check but spans several agent-carrying filter variants — its own slice.
+- **TLS listener without minimum version / weak cipher config.** — ❌ not planned: `TlsVersion` admits only TLS1.2/1.3 (sub-1.2 unrepresentable), and `cipher_suites` is already flagged a runtime no-op by semantic validation (Pingora ignores custom lists), so a per-cipher warning would mislead.
+- **Shadow traffic to production upstream**: `ShadowConfig` target overlaps a primary upstream pool. — ✅ done (`check_shadow_upstreams`).
+> Net: the three tractable rules already exist; the two remaining candidates are not viable as specified. No new code — see `crates/config/docs/validation.md` § "Lint Rules". Details in each bullet above.
 Each rule = one explicit, explainable warning; fits the existing `lint` subcommand and playground `LintWarning` surface.
 
 ## Agent ecosystem

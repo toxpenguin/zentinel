@@ -390,12 +390,25 @@ serves live traffic as some route's primary target (including the route's own).
 Mirrored requests reaching production can cause duplicate side effects; use a
 dedicated shadow upstream.
 
-> Not implemented: a **timeout-inversion** rule (route timeout shorter than the
-> upstream connect timeout, or an agent timeout ≥ the route timeout) is deferred
-> — route-level `timeout-secs`/`failure-mode` now parse from KDL, so the rule is
-> viable; it is simply not yet written. A **weak-TLS-minimum** rule is
-> unnecessary: the `TlsVersion` type only admits `TLS1.2`/`TLS1.3`, so a sub-1.2
-> minimum cannot be represented.
+> Not viable as specified: the classic **timeout-inversion** rule (route timeout
+> shorter than the upstream *connect* timeout) does not apply here. A route's
+> `timeout-secs` is applied at runtime to the upstream **read** timeout
+> (`peer.options.read_timeout` in `crates/proxy/src/proxy/http_trait.rs`) — a
+> post-connect, per-response phase that is orthogonal to the connect timeout. A
+> read timeout shorter than the connect timeout is normal (fast-read routes on a
+> slow-connect backend), not an inversion, so such a rule would fire on
+> perfectly sensible configs (e.g. `config/examples/api-gateway.kdl`). The
+> **agent-timeout half** (an agent `timeout-ms` that can consume the whole route
+> read budget) is a genuine check but spans several distinct agent-carrying
+> filter variants (`AgentFilter`, prompt-injection, PII-detection) — its own
+> slice, not yet written.
+>
+> Not planned: a **weak-cipher / weak-TLS-minimum** rule. `TlsConfig.cipher_suites`
+> is already flagged a **runtime no-op** by semantic validation — Pingora's TLS
+> layer ignores custom cipher lists and uses secure rustls defaults — so a
+> per-cipher warning would imply a weak suite is active when it is not. And
+> `TlsVersion` admits only `TLS1.2`/`TLS1.3`, so a sub-1.2 minimum cannot be
+> represented in the first place.
 
 ## Semantic Diff
 
