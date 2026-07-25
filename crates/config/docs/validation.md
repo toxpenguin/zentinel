@@ -397,11 +397,19 @@ dedicated shadow upstream.
 > post-connect, per-response phase that is orthogonal to the connect timeout. A
 > read timeout shorter than the connect timeout is normal (fast-read routes on a
 > slow-connect backend), not an inversion, so such a rule would fire on
-> perfectly sensible configs (e.g. `config/examples/api-gateway.kdl`). The
-> **agent-timeout half** (an agent `timeout-ms` that can consume the whole route
-> read budget) is a genuine check but spans several distinct agent-carrying
-> filter variants (`AgentFilter`, prompt-injection, PII-detection) — its own
-> slice, not yet written.
+> perfectly sensible configs (e.g. `config/examples/api-gateway.kdl`).
+>
+> The **agent-timeout half** (agent timeout ≥ route timeout) is also **not
+> viable as specified**. `agent.timeout-ms` is the only enforced agent timeout
+> (it becomes the pool `request_timeout`); the sibling `pool.connect-timeout-ms`
+> and `chunk-timeout-ms` have **no runtime consumers found via a workspace grep**,
+> so comparing against them would warn about knobs that do not take effect. And
+> route `timeout-secs` is a read-phase timeout (above), not a total request
+> budget, so "agent ≥ route" has no enforced meaning. The only both-enforced
+> framing — agent `timeout-ms` vs a listener's `request-timeout-secs` — needs an
+> indirect agent→filter→route→listener mapping (agents are global) and would
+> over-warn where the agent never runs under the tight-budget listener, the same
+> cry-wolf failure that ruled out the route half.
 >
 > Not planned: a **weak-cipher / weak-TLS-minimum** rule. `TlsConfig.cipher_suites`
 > is already flagged a **runtime no-op** by semantic validation — Pingora's TLS
@@ -409,6 +417,13 @@ dedicated shadow upstream.
 > per-cipher warning would imply a weak suite is active when it is not. And
 > `TlsVersion` admits only `TLS1.2`/`TLS1.3`, so a sub-1.2 minimum cannot be
 > represented in the first place.
+>
+> **Higher-value follow-up:** three timeout/security knobs dead-ended here for
+> the *same* reason — `pool.connect-timeout-ms`, `chunk-timeout-ms` and
+> `cipher_suites` all parse but appear to have no runtime consumers. A generic
+> **"configured-but-unenforced field"** lint (backed by a catalog of which KDL
+> fields are actually wired) would catch that whole class of silent no-ops and is
+> worth more than any single timeout-inversion rule.
 
 ## Semantic Diff
 
