@@ -92,6 +92,25 @@ jobs:
           echo "new_semver=$NEW_SEMVER" >> $GITHUB_OUTPUT
           echo "New semver will be: $NEW_SEMVER"
 
+  # Release-blocking security audit (RustSec advisories).
+  # Accepted-risk ignores live in .cargo/audit.toml with justifications.
+  # The weekly audit.yml stays advisory (issues); this one stops the release.
+  audit:
+    name: Security Audit (blocking)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+
+      - name: Run cargo audit
+        run: cargo audit
+
   # Build all platform binaries (validation - no publishing yet)
   build:
     name: Build
@@ -187,7 +206,7 @@ jobs:
   # Update version in Cargo.toml and publish to crates.io
   publish-crates:
     name: Publish to crates.io
-    needs: [validate, build, docker-build]  # Waits for ALL builds
+    needs: [validate, audit, build, docker-build]  # Waits for ALL builds + audit gate
     runs-on: ubuntu-latest
     if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.dry-run == false)
     environment: release  # Optional: use GitHub environment for additional protection
@@ -485,7 +504,7 @@ jobs:
 
   summary:
     name: Summary
-    needs: [validate, build, docker-build, sign-binaries, publish-crates, docker-push, release, provenance]
+    needs: [validate, audit, build, docker-build, sign-binaries, publish-crates, docker-push, release, provenance]
     runs-on: ubuntu-latest
     if: always()
     steps:
@@ -502,6 +521,7 @@ jobs:
           echo "| Job | Status |" >> $GITHUB_STEP_SUMMARY
           echo "|-----|--------|" >> $GITHUB_STEP_SUMMARY
           echo "| Validate | ${{ needs.validate.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Security Audit | ${{ needs.audit.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Build | ${{ needs.build.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Docker Build | ${{ needs.docker-build.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Sign Binaries | ${{ needs.sign-binaries.result }} |" >> $GITHUB_STEP_SUMMARY
@@ -516,10 +536,10 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
 
           # Show failure message if validation phase failed
-          if [ "${{ needs.build.result }}" = "failure" ] || [ "${{ needs.docker-build.result }}" = "failure" ]; then
-            echo "### ⚠️ Build Failed" >> $GITHUB_STEP_SUMMARY
-            echo "No version bump or publishing occurred because the build failed." >> $GITHUB_STEP_SUMMARY
-            echo "Fix the build issues and push a new tag." >> $GITHUB_STEP_SUMMARY
+          if [ "${{ needs.build.result }}" = "failure" ] || [ "${{ needs.docker-build.result }}" = "failure" ] || [ "${{ needs.audit.result }}" = "failure" ]; then
+            echo "### ⚠️ Validation Failed" >> $GITHUB_STEP_SUMMARY
+            echo "No version bump or publishing occurred because a validation job failed." >> $GITHUB_STEP_SUMMARY
+            echo "If the security audit failed: fix or vendor the advisory, or add a justified ignore to .cargo/audit.toml, then push a new tag." >> $GITHUB_STEP_SUMMARY
           else
             echo "### Artifacts" >> $GITHUB_STEP_SUMMARY
             echo "- **crates.io**: [zentinel-proxy](https://crates.io/crates/zentinel-proxy)" >> $GITHUB_STEP_SUMMARY
@@ -530,5 +550,6 @@ jobs:
             echo "- Binaries signed with Sigstore cosign (keyless)" >> $GITHUB_STEP_SUMMARY
             echo "- Container images signed with cosign" >> $GITHUB_STEP_SUMMARY
             echo "- SBOM attached (CycloneDX + SPDX)" >> $GITHUB_STEP_SUMMARY
+            echo "- cargo-audit gate passed (RustSec advisories)" >> $GITHUB_STEP_SUMMARY
             echo "- SLSA v1.0 provenance attested" >> $GITHUB_STEP_SUMMARY
           fi

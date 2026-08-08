@@ -259,11 +259,14 @@ publishes all workspace crates to crates.io, and creates the GitHub Release.
    git tag -a YY.MM_PATCH origin/main -m "Release YY.MM_PATCH (semver X.Y.Z)"
    git push origin YY.MM_PATCH
    ```
-4. **Verify** the run: `gh run list --workflow Release --limit 1`. It builds 4 platform
-   targets, signs with cosign, publishes all workspace crates as **`X.Y.Z + 1`**, and
-   creates the GitHub Release (whose notes show the *published* version, so the Release
-   says `X.Y.Z + 1` while the CHANGELOG says `X.Y.Z` — by design). All builds run
-   **before** any publish, so a build failure publishes nothing.
+4. **Verify** the run: `gh run list --workflow Release --limit 1`. It first runs a
+   **blocking `cargo audit` gate** (RustSec; ignores live in `.cargo/audit.toml`),
+   then builds 4 platform targets, signs with cosign, publishes all workspace crates
+   as **`X.Y.Z + 1`**, and creates the GitHub Release (whose notes show the
+   *published* version, so the Release says `X.Y.Z + 1` while the CHANGELOG says
+   `X.Y.Z` — by design). All builds run **before** any publish, so a build failure
+   publishes nothing; a failed audit blocks everything — fix/update the dependency
+   or add a justified ignore to `.cargo/audit.toml`, then push a new tag.
 5. **Post-release bump (manual, every release):** the workflow force-pushes a
    `chore/bump-<published>` branch but its `gh pr create` reliably fails, leaving an
    **orphan branch that only edits `Cargo.toml`**. Open the PR yourself, add a

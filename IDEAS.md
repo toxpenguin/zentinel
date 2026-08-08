@@ -25,8 +25,15 @@ Not a text diff: report *behavioral* deltas (routes added/removed/shadowed, time
 - Any header/path normalization in the request hot path.
 Run as scheduled CI job (nightly, bounded time), seed corpus from `config/examples/*.kdl` and conformance fixtures. Security-first proxy without fuzzing is a gap.
 
-### 4. Supply-chain: SBOM + cargo-vet in release
-Release workflow already signs with cosign. Add SBOM generation (syft/cargo-sbom) attached to GitHub Releases, and consider `cargo vet`/`cargo audit` as a release-blocking step if not already blocking. Cheap, and operators deploying an edge proxy increasingly require SBOMs.
+### 4. Supply-chain: SBOM + cargo-vet in release — ✅ done
+SBOM turned out to be already shipped: cargo-sbom (CycloneDX 1.5 + SPDX 2.3) in
+`_build.yml` attached to GitHub Releases, container SBOM via syft + cosign attest
+in `_docker.yml`. Remaining gap closed 2026-08-09: release-blocking `cargo audit`
+job in `release.yml` gating `publish-crates` (nothing publishes on a failed
+audit); accepted-risk ignores live in `.cargo/audit.toml` with justifications;
+weekly `audit.yml` stays advisory (opens issues). `cargo vet` declined:
+per-dependency audit curation is ongoing overhead with little marginal value on
+top of the RustSec gate + SBOM + cosign signing + SLSA provenance.
 
 ## Config quality
 
