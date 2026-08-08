@@ -9,7 +9,7 @@ ZENTINEL_CONFIG = "config/zentinel.kdl"
 ZENTINEL_WORKERS = "0"
 
 [tools]
-rust = "1.92.0"
+rust = "1.95.0"
 # These cargo tools are not recognized by mise yet, commenting out to avoid warnings
 # cargo-audit = "latest"
 # cargo-tarpaulin = "latest"
