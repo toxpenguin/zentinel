@@ -27,6 +27,7 @@ use zentinel_proxy::acme::{
 };
 use zentinel_proxy::agent_scaffold::{run_agent_command, AgentArgs};
 use zentinel_proxy::bundle::{run_bundle_command, BundleArgs};
+use zentinel_proxy::import::{run_import_command, ImportArgs};
 use zentinel_proxy::tls::HotReloadableSniResolver;
 use zentinel_proxy::{ReloadTrigger, SignalManager, SignalType, ZentinelProxy};
 
@@ -162,6 +163,9 @@ enum Commands {
 
     /// Scaffold and manage external agents (`agent new <name>`)
     Agent(AgentArgs),
+
+    /// Import a foreign proxy configuration (Apache httpd) and emit Zentinel KDL
+    Import(ImportArgs),
 }
 
 fn main() -> Result<()> {
@@ -223,6 +227,7 @@ fn main() -> Result<()> {
             run_bundle_command(args)
         }
         Some(Commands::Agent(args)) => run_agent_command(args),
+        Some(Commands::Import(args)) => run_import_command(args),
         None => {
             // Default: run the server
             run_server(cli.config, cli.verbose, cli.daemon, cli.upgrade)

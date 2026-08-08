@@ -362,6 +362,22 @@ socket (`--socket`) or gRPC (`--grpc`). Implementation:
 
 ## Configuration Testing
 
+### Import an Apache config
+
+```bash
+# Convert Apache VirtualHosts to Zentinel KDL (stdout; report on stderr)
+cargo run --bin zentinel -- import apache httpd.conf
+
+# Write to a file
+cargo run --bin zentinel -- import apache httpd.conf -o zentinel.kdl
+```
+
+Maps `<VirtualHost>`, `ServerName`/`ServerAlias`, `ProxyPass`, and
+`SSLCertificateFile`/`SSLCertificateKeyFile`. Everything else is reported
+loudly (stderr + `// NOT IMPORTED` comments in the output) — never silently
+dropped. Output is gated on `Config::from_kdl` + `validate()` before being
+shown. See `crates/proxy/docs/import.md`.
+
 ### Validate Config
 
 ```bash

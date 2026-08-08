@@ -63,6 +63,7 @@ pub mod geo_filter;
 pub mod grpc_health;
 pub mod health;
 pub mod http_helpers;
+pub mod import;
 pub mod inference;
 #[cfg(feature = "kubernetes")]
 pub mod kubeconfig;
