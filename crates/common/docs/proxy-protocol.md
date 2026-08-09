@@ -160,7 +160,12 @@ Wired via two fork hooks (`zentinelproxy/pingora` branch `proxy-protocol-hooks`:
   `0.0.0.0/0` or `::/0` — any client that can reach the listener could
   spoof its address; only safe on isolated networks.
 
-## Remaining
+## Conformance
 
-- `stack`/conformance scenario asserting real-IP propagation end-to-end
-  (IDEAS #16 depends on it).
+`crates/proxy/tests/proxy_protocol_e2e_test.rs` asserts real-IP propagation
+end-to-end over real sockets (the property IDEAS #16 depends on): a client
+address carried in by a trusted LB's PROXY v2 header is what Zentinel reports
+for the connection *and* what the backend decodes from Zentinel's emitted
+header (v1 and v2), with application bytes intact — plus the security half:
+the same wire bytes from an untrusted source drop the connection and leave
+the socket peer address untouched.
