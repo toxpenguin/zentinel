@@ -51,8 +51,16 @@ Each rule = one explicit, explainable warning; fits the existing `lint` subcomma
 
 ## Agent ecosystem
 
-### 6. Official agent SDKs (Go first, then Python)
-The conformance suite is already Go (`conformance/`); the wire knowledge exists. Package it: `zentinel-agent-sdk-go` implementing v2 handshake, framing, drain, health — so third parties write `func OnRequestHeaders(...) Decision` and nothing else. Conformance suite becomes the compliance badge ("passes zentinel-conformance vX"). Grows the external-agent ecosystem, which is the whole architectural bet.
+### 6. Official agent SDKs (Go first, then Python) — 🚧 Go shipped, Python pending
+Go SDK: `sdk/go` (`github.com/zentinelproxy/zentinel/sdk/go`, zero deps) —
+v2 UDS framing, handshake + capability negotiation from implemented optional
+interfaces, correlation-ID response routing, ping/pong, graceful shutdown.
+Agents implement `OnRequestHeaders` and optionally body/response/complete
+interfaces; wire shapes golden-tested against serde output. CI job `go-sdk`
+(gofmt + vet + test). Note: `conformance/` is Gateway API conformance, not
+agent-wire (the original premise was wrong) — an agent-protocol conformance
+suite ("passes zentinel-conformance vX" badge) is still open, as are the
+Python SDK and gRPC/reverse-connection transports.
 
 ### 7. Agent starter template repo / `zentinel agent new` — ✅ done
 Scaffold generator producing a minimal agent (echo-style, from `agents/echo/`) with Dockerfile, conformance test wiring, and KDL snippet to register it. Lowers the barrier from "read the protocol docs" to "edit one function".

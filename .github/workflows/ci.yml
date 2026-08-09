@@ -164,3 +164,25 @@ jobs:
 
       - name: Run unit tests
         run: cargo test --workspace --lib
+
+  go-sdk:
+    name: Go agent SDK
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Install Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: sdk/go/go.mod
+
+      - name: Vet
+        working-directory: sdk/go
+        run: |
+          test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
+          go vet ./...
+
+      - name: Test
+        working-directory: sdk/go
+        run: go test ./...
