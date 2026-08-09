@@ -18,12 +18,13 @@ Not a text diff: report *behavioral* deltas (routes added/removed/shadowed, time
 
 ## Security hardening
 
-### 3. Fuzzing targets (none exist today)
-`cargo-fuzz` targets for the highest-value parsers:
-- KDL config parser (`crates/config`) — untrusted-ish input, complex grammar.
-- Agent protocol v2 frame decode (`crates/agent-protocol/src/v2`) — binary wire format, network-facing.
-- Any header/path normalization in the request hot path.
-Run as scheduled CI job (nightly, bounded time), seed corpus from `config/examples/*.kdl` and conformance fixtures. Security-first proxy without fuzzing is a gap.
+### 3. Fuzzing targets — ✅ done
+Five `cargo-fuzz` targets in the excluded `fuzz/` workspace: `kdl_config`
+(`Config::from_kdl`), `agent_request_headers`/`agent_body_chunk`/`agent_response`
+(v2 binary frame decoders), `proxy_protocol` (HAProxy v1/v2 header parse +
+round-trip). Nightly bounded-time CI in `.github/workflows/fuzz.yml` (03:00 UTC),
+KDL corpus seeded from `config/examples/*.kdl`. Remaining candidate if hot-path
+normalization ever grows custom parsing: header/path normalization target.
 
 ### 4. Supply-chain: SBOM + cargo-vet in release — ✅ done
 SBOM turned out to be already shipped: cargo-sbom (CycloneDX 1.5 + SPDX 2.3) in
@@ -62,11 +63,22 @@ Scaffold generator producing a minimal agent (echo-style, from `agents/echo/`) w
 ### 8. Runtime config drift check
 Admin API already exists (`/api/admin`). Expose loaded-config content hash + load timestamp; add `zentinel validate --against-running <admin-addr>` that compares on-disk config to what the proxy actually runs. Kills the classic "edited the file, forgot to reload" incident class. Calm infrastructure.
 
-### 9. Chaos suite: resource-bound assertions
-`tests/chaos` already covers agent crash + circuit breaker. Add scenarios asserting *bounded resources* under sustained failure: slow-loris agent (reads headers, never answers), UDS socket deleted mid-flight, agent restart storm. Assert memory/fd ceilings hold, not just that requests fail correctly — "bounded by design" currently isn't chaos-verified.
+### 9. Chaos suite: resource-bound assertions — ✅ done
+`tests/chaos/scenarios/resilience/test_resource_bounds.sh` (wired: Makefile
+`test-resource-bounds`, runner scenario `resource-bounds`): slow-loris agent
+(frozen, never answers), agent endpoint vanishing mid-flight (UDS-delete
+analog), restart storm under concurrent load — asserting peak-fd and memory
+ceilings against a warmed baseline plus post-fault reclamation, not just
+correct request failure. "Bounded by design" is now chaos-verified.
 
-### 10. Benchmark regression gate in CI
-Criterion benches exist (`cargo bench -p zentinel-proxy`). Save a baseline per `main` merge, compare on PRs touching `crates/proxy` hot paths, fail on >N% routing/filtering regression. Turns "production correctness beats feature breadth" into an enforced budget instead of a review-time hope.
+### 10. Benchmark regression gate in CI — ✅ done
+`bench.yml` + `scripts/bench-gate.py`: PR merge-base and head benched
+back-to-back on the same runner (no stored baseline — cross-runner CPU variance
+made that flaky by construction), hard-fail at +20%. Gated: agent-protocol
+`full_request_path/json_path` and proxy `route_match/{cache_hit,cache_miss}`
+(`crates/proxy/benches/routing.rs` — 50-route table, LRU steady state + full
+evaluation). Per-crate path scoping; gate-only PRs bench both; out-of-scope
+benches report as skipped.
 
 ## Hosting-stack compatibility (Apache, CloudLinux, Imunify360, control panels)
 

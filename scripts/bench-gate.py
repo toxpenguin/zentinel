@@ -24,10 +24,16 @@ from pathlib import Path
 # atomic-vs-rwlock / json-vs-msgpack comparison arms in ``hot_path.rs`` (those
 # exist to justify a design choice; a "regression" in the arm we did NOT pick is
 # meaningless). ``json_path`` is the production wire codec (``UdsEncoding``
-# defaults to JSON; MessagePack is behind the ``binary-uds`` feature). Extend
-# this list as more production benches land (e.g. proxy routing/filtering).
+# defaults to JSON; MessagePack is behind the ``binary-uds`` feature). The
+# ``route_match`` arms are the per-request routing decision from
+# ``crates/proxy/benches/routing.rs``: LRU steady state and full-table
+# evaluation. Which benches actually ran depends on which crate paths the PR
+# touched (see bench.yml); benches whose crate was not benched are reported as
+# skipped, not failed.
 GATED_BENCHES = [
     "full_request_path/json_path",  # full per-request path, production JSON codec
+    "route_match/cache_hit",  # routing steady state (LRU hit)
+    "route_match/cache_miss",  # routing worst case (full table evaluation)
 ]
 
 CRITERION_ROOT = Path(os.environ.get("CRITERION_ROOT", "target/criterion"))
@@ -65,6 +71,13 @@ def main() -> int:
 
     for bench in GATED_BENCHES:
         bench_dir = CRITERION_ROOT / bench
+        if not bench_dir.exists():
+            # The whole bench group never ran this job — its crate was not in
+            # the PR's bench scope (see the path filters in bench.yml). That is
+            # expected, not a gate failure.
+            rows.append((bench, "—", "—", "—", "⏭️ skipped (crate not benched)"))
+            continue
+
         # ``change/estimates.json`` holds the relative diff vs the baseline;
         # ``mean.point_estimate`` is a fraction (0.20 == +20% slower).
         change = _mean_point(bench_dir / "change" / "estimates.json")

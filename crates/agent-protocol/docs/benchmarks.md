@@ -46,13 +46,17 @@ Gated today (see `GATED_BENCHES` in `scripts/bench-gate.py`):
 | Benchmark | Why |
 |-----------|-----|
 | `full_request_path/json_path` | Full per-request path (agent lookup, affinity, health check, counters, serialize) using the **production** wire codec — `UdsEncoding` defaults to JSON; MessagePack is behind the `binary-uds` feature. |
+| `route_match/cache_hit` | Per-request routing decision, LRU steady state (`crates/proxy/benches/routing.rs`). |
+| `route_match/cache_miss` | Per-request routing decision, full-table evaluation (worst case / cold cache). |
 
 Sub-microsecond and comparative arms (`protocol_metrics`, `health_cache`,
 `header_*`, `serialization`/`deserialization`, `msgpack_path`) are excluded:
 at CI scale they are noise, not signal.
 
-When proxy routing/filtering benches land, add their ids to `GATED_BENCHES` and
-the `BENCH_FILTER` regex in `bench.yml`.
+Each crate's bench only runs when the PR touches that crate (a gate-only PR
+benches both); `bench-gate.py` reports out-of-scope benches as skipped. New
+production benches: add ids to `GATED_BENCHES` and the matching
+`*_BENCH_FILTER` regex in `bench.yml`.
 
 ## How the gate reads the result
 

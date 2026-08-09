@@ -1,12 +1,18 @@
 name: Bench Gate
 
-# Regression gate for the agent-protocol request hot path.
+# Regression gate for the request hot paths.
 #
-# Runs the production-representative integration benchmark
-# (`full_request_path/json_path`) on the PR merge-base and the PR head
-# back-to-back on the SAME runner, then fails if the hot path regressed by more
-# than the threshold. Turns "production correctness beats feature breadth" into
-# an enforced budget instead of a review-time hope (IDEAS.md #10).
+# Runs the production-representative benchmarks on the PR merge-base and the
+# PR head back-to-back on the SAME runner, then fails if a gated hot path
+# regressed by more than the threshold. Turns "production correctness beats
+# feature breadth" into an enforced budget instead of a review-time hope
+# (IDEAS.md #10).
+#
+# Gated benches (GATED_BENCHES in scripts/bench-gate.py):
+#   - agent-protocol `full_request_path/json_path` — per-request agent call,
+#     production JSON codec.
+#   - proxy `route_match/{cache_hit,cache_miss}` — per-request routing
+#     decision, LRU steady state and full-table evaluation.
 #
 # Why same-runner, back-to-back (not a stored/cross-run baseline):
 # GitHub-hosted runners vary up to ~2x across CPU generations (Intel vs AMD).
@@ -15,21 +21,23 @@ name: Bench Gate
 # one physical runner cancels it. No external action, no gh-pages state branch
 # (Manifesto: no hidden control planes, no vendor lock-in).
 #
+# Scope control: each crate's bench only runs when the PR touches that crate
+# (compiling the proxy for an agent-protocol-only PR would double the job for
+# no signal). A PR touching only the gate itself (this file or the script)
+# benches both crates so gate changes are exercised. bench-gate.py reports
+# out-of-scope benches as skipped, not failed.
+#
 # Posture: generous hard-fail (20%). Microbenchmarks on shared CI are noisy; a
 # tight gate cries wolf and gets muted, which is worse than no gate (Manifesto:
 # calm, no surprises; repo rule: no flaky tests). Tune the threshold via
 # BENCH_REGRESSION_THRESHOLD. To make the gate advisory instead of blocking, add
 # `continue-on-error: true` to the "Evaluate regression gate" step.
-#
-# Scope: only agent-protocol's `hot_path` bench exists today, and only its
-# production-representative arm is gated (not the vec-vs-smallvec /
-# atomic-vs-rwlock / json-vs-msgpack comparison benches). Extend GATED_BENCHES
-# in scripts/bench-gate.py when proxy routing/filtering benches land.
 
 on:
   pull_request:
     paths:
       - 'crates/agent-protocol/**'
+      - 'crates/proxy/**'
       - 'scripts/bench-gate.py'
       - '.github/workflows/bench.yml'
 
@@ -39,11 +47,12 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
-  # Fail the gate if the hot path regresses by more than this fraction.
+  # Fail the gate if a hot path regresses by more than this fraction.
   BENCH_REGRESSION_THRESHOLD: '0.20'
-  # Criterion filter (regex over benchmark ids). Keeps CI bounded to the gated
-  # bench; must stay in sync with GATED_BENCHES in scripts/bench-gate.py.
-  BENCH_FILTER: 'full_request_path'
+  # Criterion filters (regex over benchmark ids). Keep CI bounded to the gated
+  # benches; must stay in sync with GATED_BENCHES in scripts/bench-gate.py.
+  AGENT_BENCH_FILTER: 'full_request_path'
+  PROXY_BENCH_FILTER: 'route_match'
 
 jobs:
   bench-gate:
@@ -96,17 +105,63 @@ jobs:
           echo "sha=$BASE" >> "$GITHUB_OUTPUT"
           echo "Merge-base: $BASE"
 
-      - name: Benchmark merge-base (save baseline)
+      - name: Detect bench scope
+        id: scope
         run: |
+          CHANGED=$(git diff --name-only \
+            "${{ steps.base.outputs.sha }}" \
+            "${{ github.event.pull_request.head.sha }}")
+          echo "$CHANGED"
+          AGENT=false; PROXY=false
+          grep -q '^crates/agent-protocol/' <<<"$CHANGED" && AGENT=true
+          grep -q '^crates/proxy/' <<<"$CHANGED" && PROXY=true
+          # Gate-only PR: exercise both so gate changes are actually tested.
+          if [[ "$AGENT" == false && "$PROXY" == false ]]; then
+            AGENT=true; PROXY=true
+          fi
+          echo "agent=$AGENT" >> "$GITHUB_OUTPUT"
+          echo "proxy=$PROXY" >> "$GITHUB_OUTPUT"
+          echo "Bench scope: agent-protocol=$AGENT proxy=$PROXY"
+
+      - name: Benchmark merge-base (save baseline)
+        id: baseline
+        run: |
+          # The restored target/ cache may hold criterion results from a prior
+          # run; stale comparison data would corrupt this run's verdicts and
+          # defeat bench-gate.py's skipped-bench detection. Start clean.
+          rm -rf target/criterion
+
           git checkout --quiet --detach "${{ steps.base.outputs.sha }}"
-          cargo bench -p zentinel-agent-protocol --bench hot_path -- \
-            --save-baseline base "$BENCH_FILTER"
+          if [[ "${{ steps.scope.outputs.agent }}" == "true" ]]; then
+            cargo bench -p zentinel-agent-protocol --bench hot_path -- \
+              --save-baseline base "$AGENT_BENCH_FILTER"
+          fi
+          PROXY_BASELINE=false
+          if [[ "${{ steps.scope.outputs.proxy }}" == "true" ]]; then
+            # The routing bench may not exist on an older merge-base (e.g. the
+            # PR that introduces it). No baseline -> nothing to compare against;
+            # the head bench is skipped too and the gate reports it as skipped.
+            if cargo bench -p zentinel-proxy --bench routing -- --list >/dev/null 2>&1; then
+              cargo bench -p zentinel-proxy --bench routing -- \
+                --save-baseline base "$PROXY_BENCH_FILTER"
+              PROXY_BASELINE=true
+            else
+              echo "routing bench absent on merge-base; skipping proxy gate"
+            fi
+          fi
+          echo "proxy=$PROXY_BASELINE" >> "$GITHUB_OUTPUT"
 
       - name: Benchmark PR head (compare to baseline)
         run: |
           git checkout --quiet --detach "${{ github.event.pull_request.head.sha }}"
-          cargo bench -p zentinel-agent-protocol --bench hot_path -- \
-            --baseline base "$BENCH_FILTER"
+          if [[ "${{ steps.scope.outputs.agent }}" == "true" ]]; then
+            cargo bench -p zentinel-agent-protocol --bench hot_path -- \
+              --baseline base "$AGENT_BENCH_FILTER"
+          fi
+          if [[ "${{ steps.baseline.outputs.proxy }}" == "true" ]]; then
+            cargo bench -p zentinel-proxy --bench routing -- \
+              --baseline base "$PROXY_BENCH_FILTER"
+          fi
 
       - name: Evaluate regression gate
         run: python3 scripts/bench-gate.py
