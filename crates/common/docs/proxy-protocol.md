@@ -22,14 +22,9 @@ It has no runtime dependencies (pure `std`), so it also compiles into the
 WASM playground.
 
 Reading the header off an accepted L4 stream (inbound) and writing it before the
-upstream request (outbound) both require a hook at Pingora's listener/connector
-layer. The Zentinel `zentinelproxy/pingora` fork exposes no such hook today
-(`connected_to_upstream` hands back only a `RawFd`, and `ConnectionFilter` is
-accept/reject only), so datapath integration is a **separate slice** against the
-fork. Until that lands there is deliberately **no operator-facing config** — an
-accepted-but-ignored `proxy-protocol` option would be a silent failure (backends
-still see the proxy IP while the config validates clean), which the Manifesto
-forbids.
+upstream request (outbound) both happen at Pingora's listener/connector layer,
+via two fork hooks (`AcceptPreprocessor`, `PeerOptions.connect_prefix`) — see
+"Datapath (shipped)" below for the wiring and the operator-facing config.
 
 Keeping the codec standalone also makes it exhaustively testable and fuzzable in
 isolation — it is a network-facing binary parser, the same criterion that gets
