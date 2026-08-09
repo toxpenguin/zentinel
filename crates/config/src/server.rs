@@ -115,6 +115,33 @@ pub struct ListenerConfig {
     /// Equivalent to nginx's keepalive_requests. None = unlimited.
     #[serde(default)]
     pub keepalive_max_requests: Option<u32>,
+
+    /// PROXY protocol acceptance (None = connections must not send a header).
+    ///
+    /// When set, every connection to this listener MUST arrive from a trusted
+    /// source and MUST begin with a valid PROXY v1/v2 header; anything else is
+    /// dropped. The header's source address becomes the connection's client
+    /// address (logs, rate limiting, geo filtering).
+    #[serde(default)]
+    pub proxy_protocol: Option<ProxyProtocolConfig>,
+}
+
+/// PROXY protocol acceptance settings for a listener.
+///
+/// Security: the header is only honored when the connection's real socket
+/// peer is inside one of the `trusted` CIDR blocks. Without this check any
+/// client could spoof its address, so `trusted` must be non-empty. To trust
+/// everything (e.g. an isolated network), write `0.0.0.0/0` explicitly.
+#[derive(Debug, Clone, Serialize, Deserialize, Validate)]
+pub struct ProxyProtocolConfig {
+    /// CIDR blocks (e.g. `10.0.0.0/8`, `fd00::/8`) allowed to send a header.
+    #[validate(length(min = 1, message = "at least one trusted CIDR is required"))]
+    pub trusted: Vec<String>,
+
+    /// Deadline for the complete header to arrive, in milliseconds.
+    /// Connections that stall mid-header are dropped. Default: 2000.
+    #[serde(default = "default_proxy_protocol_header_timeout_ms")]
+    pub header_timeout_ms: u64,
 }
 
 /// Listener protocol
@@ -452,6 +479,10 @@ pub(crate) fn default_keepalive_timeout() -> u64 {
 
 pub(crate) fn default_max_concurrent_streams() -> u32 {
     100
+}
+
+pub(crate) fn default_proxy_protocol_header_timeout_ms() -> u64 {
+    2000
 }
 
 fn default_min_tls_version() -> TlsVersion {

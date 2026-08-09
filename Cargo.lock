@@ -5,7 +5,7 @@ version = 4
 [[package]]
 name = "TinyUFO"
 version = "0.8.1"
-source = "git+https://github.com/zentinelproxy/pingora.git?rev=b8d0c00#b8d0c006629cfb91a64f0749a7d260d5bc0be31f"
+source = "git+https://github.com/toxpenguin/pingora.git?rev=1eb86b8#1eb86b8606292af27e885126f0ca85bf0c46ccda"
 dependencies = [
  "ahash",
  "crossbeam-queue",
@@ -4261,7 +4261,7 @@ checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
 [[package]]
 name = "pingora"
 version = "0.8.1"
-source = "git+https://github.com/zentinelproxy/pingora.git?rev=b8d0c00#b8d0c006629cfb91a64f0749a7d260d5bc0be31f"
+source = "git+https://github.com/toxpenguin/pingora.git?rev=1eb86b8#1eb86b8606292af27e885126f0ca85bf0c46ccda"
 dependencies = [
  "pingora-cache",
  "pingora-core",
@@ -4274,7 +4274,7 @@ dependencies = [
 [[package]]
 name = "pingora-cache"
 version = "0.8.1"
-source = "git+https://github.com/zentinelproxy/pingora.git?rev=b8d0c00#b8d0c006629cfb91a64f0749a7d260d5bc0be31f"
+source = "git+https://github.com/toxpenguin/pingora.git?rev=1eb86b8#1eb86b8606292af27e885126f0ca85bf0c46ccda"
 dependencies = [
  "ahash",
  "async-trait",
@@ -4310,7 +4310,7 @@ dependencies = [
 [[package]]
 name = "pingora-core"
 version = "0.8.1"
-source = "git+https://github.com/zentinelproxy/pingora.git?rev=b8d0c00#b8d0c006629cfb91a64f0749a7d260d5bc0be31f"
+source = "git+https://github.com/toxpenguin/pingora.git?rev=1eb86b8#1eb86b8606292af27e885126f0ca85bf0c46ccda"
 dependencies = [
  "ahash",
  "async-trait",
@@ -4363,12 +4363,12 @@ dependencies = [
 [[package]]
 name = "pingora-error"
 version = "0.8.1"
-source = "git+https://github.com/zentinelproxy/pingora.git?rev=b8d0c00#b8d0c006629cfb91a64f0749a7d260d5bc0be31f"
+source = "git+https://github.com/toxpenguin/pingora.git?rev=1eb86b8#1eb86b8606292af27e885126f0ca85bf0c46ccda"
 
 [[package]]
 name = "pingora-header-serde"
 version = "0.8.1"
-source = "git+https://github.com/zentinelproxy/pingora.git?rev=b8d0c00#b8d0c006629cfb91a64f0749a7d260d5bc0be31f"
+source = "git+https://github.com/toxpenguin/pingora.git?rev=1eb86b8#1eb86b8606292af27e885126f0ca85bf0c46ccda"
 dependencies = [
  "bytes",
  "http 1.5.0",
@@ -4383,7 +4383,7 @@ dependencies = [
 [[package]]
 name = "pingora-http"
 version = "0.8.1"
-source = "git+https://github.com/zentinelproxy/pingora.git?rev=b8d0c00#b8d0c006629cfb91a64f0749a7d260d5bc0be31f"
+source = "git+https://github.com/toxpenguin/pingora.git?rev=1eb86b8#1eb86b8606292af27e885126f0ca85bf0c46ccda"
 dependencies = [
  "bytes",
  "http 1.5.0",
@@ -4393,7 +4393,7 @@ dependencies = [
 [[package]]
 name = "pingora-ketama"
 version = "0.8.1"
-source = "git+https://github.com/zentinelproxy/pingora.git?rev=b8d0c00#b8d0c006629cfb91a64f0749a7d260d5bc0be31f"
+source = "git+https://github.com/toxpenguin/pingora.git?rev=1eb86b8#1eb86b8606292af27e885126f0ca85bf0c46ccda"
 dependencies = [
  "crc32fast",
 ]
@@ -4401,7 +4401,7 @@ dependencies = [
 [[package]]
 name = "pingora-limits"
 version = "0.8.1"
-source = "git+https://github.com/zentinelproxy/pingora.git?rev=b8d0c00#b8d0c006629cfb91a64f0749a7d260d5bc0be31f"
+source = "git+https://github.com/toxpenguin/pingora.git?rev=1eb86b8#1eb86b8606292af27e885126f0ca85bf0c46ccda"
 dependencies = [
  "ahash",
 ]
@@ -4409,7 +4409,7 @@ dependencies = [
 [[package]]
 name = "pingora-load-balancing"
 version = "0.8.1"
-source = "git+https://github.com/zentinelproxy/pingora.git?rev=b8d0c00#b8d0c006629cfb91a64f0749a7d260d5bc0be31f"
+source = "git+https://github.com/toxpenguin/pingora.git?rev=1eb86b8#1eb86b8606292af27e885126f0ca85bf0c46ccda"
 dependencies = [
  "arc-swap",
  "async-trait",
@@ -4430,7 +4430,7 @@ dependencies = [
 [[package]]
 name = "pingora-lru"
 version = "0.8.1"
-source = "git+https://github.com/zentinelproxy/pingora.git?rev=b8d0c00#b8d0c006629cfb91a64f0749a7d260d5bc0be31f"
+source = "git+https://github.com/toxpenguin/pingora.git?rev=1eb86b8#1eb86b8606292af27e885126f0ca85bf0c46ccda"
 dependencies = [
  "arrayvec",
  "hashbrown 0.17.0",
@@ -4441,7 +4441,7 @@ dependencies = [
 [[package]]
 name = "pingora-memory-cache"
 version = "0.8.1"
-source = "git+https://github.com/zentinelproxy/pingora.git?rev=b8d0c00#b8d0c006629cfb91a64f0749a7d260d5bc0be31f"
+source = "git+https://github.com/toxpenguin/pingora.git?rev=1eb86b8#1eb86b8606292af27e885126f0ca85bf0c46ccda"
 dependencies = [
  "TinyUFO",
  "ahash",
@@ -4456,7 +4456,7 @@ dependencies = [
 [[package]]
 name = "pingora-pool"
 version = "0.8.1"
-source = "git+https://github.com/zentinelproxy/pingora.git?rev=b8d0c00#b8d0c006629cfb91a64f0749a7d260d5bc0be31f"
+source = "git+https://github.com/toxpenguin/pingora.git?rev=1eb86b8#1eb86b8606292af27e885126f0ca85bf0c46ccda"
 dependencies = [
  "crossbeam-queue",
  "log",
@@ -4470,7 +4470,7 @@ dependencies = [
 [[package]]
 name = "pingora-proxy"
 version = "0.8.1"
-source = "git+https://github.com/zentinelproxy/pingora.git?rev=b8d0c00#b8d0c006629cfb91a64f0749a7d260d5bc0be31f"
+source = "git+https://github.com/toxpenguin/pingora.git?rev=1eb86b8#1eb86b8606292af27e885126f0ca85bf0c46ccda"
 dependencies = [
  "async-trait",
  "bytes",
@@ -4492,7 +4492,7 @@ dependencies = [
 [[package]]
 name = "pingora-runtime"
 version = "0.8.1"
-source = "git+https://github.com/zentinelproxy/pingora.git?rev=b8d0c00#b8d0c006629cfb91a64f0749a7d260d5bc0be31f"
+source = "git+https://github.com/toxpenguin/pingora.git?rev=1eb86b8#1eb86b8606292af27e885126f0ca85bf0c46ccda"
 dependencies = [
  "once_cell",
  "rand 0.8.6",
@@ -4503,7 +4503,7 @@ dependencies = [
 [[package]]
 name = "pingora-rustls"
 version = "0.8.1"
-source = "git+https://github.com/zentinelproxy/pingora.git?rev=b8d0c00#b8d0c006629cfb91a64f0749a7d260d5bc0be31f"
+source = "git+https://github.com/toxpenguin/pingora.git?rev=1eb86b8#1eb86b8606292af27e885126f0ca85bf0c46ccda"
 dependencies = [
  "log",
  "no_debug",
@@ -4519,7 +4519,7 @@ dependencies = [
 [[package]]
 name = "pingora-timeout"
 version = "0.8.1"
-source = "git+https://github.com/zentinelproxy/pingora.git?rev=b8d0c00#b8d0c006629cfb91a64f0749a7d260d5bc0be31f"
+source = "git+https://github.com/toxpenguin/pingora.git?rev=1eb86b8#1eb86b8606292af27e885126f0ca85bf0c46ccda"
 dependencies = [
  "once_cell",
  "parking_lot",

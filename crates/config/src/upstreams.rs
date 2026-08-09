@@ -122,6 +122,26 @@ pub struct UpstreamConfig {
     /// HTTP version configuration
     #[serde(default)]
     pub http_version: HttpVersionConfig,
+
+    /// Emit a PROXY protocol header on new upstream connections
+    /// (None = never send one).
+    ///
+    /// The header carries the downstream client's address so the backend sees
+    /// the real client. Note: connections carrying a PROXY header are pooled
+    /// per client identity, so cross-client connection reuse is lost — the
+    /// same trade HAProxy's `send-proxy` makes.
+    #[serde(default)]
+    pub proxy_protocol: Option<ProxyProtocolVersion>,
+}
+
+/// PROXY protocol version to emit to an upstream.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ProxyProtocolVersion {
+    /// Human-readable text header (`PROXY TCP4 ...`); TCP-only.
+    V1,
+    /// Binary header; the modern default (AWS NLB, HAProxy `send-proxy-v2`).
+    V2,
 }
 
 /// HTTP version configuration for upstream connections

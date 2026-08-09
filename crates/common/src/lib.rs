@@ -9,6 +9,7 @@
 //! - [`types`]: Common type definitions (ByteSize, Priority, etc.)
 //! - [`errors`]: Error types and result aliases
 //! - [`limits`]: Resource limits and rate limiting
+//! - [`net`]: Network address utilities (CIDR blocks for trust lists)
 //! - [`observability`]: Metrics, logging, and tracing (runtime only)
 //! - [`circuit_breaker`]: Circuit breaker state machine (runtime only)
 //! - [`registry`]: Generic type-safe registry abstraction (runtime only)
@@ -21,6 +22,7 @@ pub mod errors;
 pub mod ids;
 pub mod inference;
 pub mod limits;
+pub mod net;
 #[cfg(feature = "runtime")]
 pub mod observability;
 pub mod proxy_protocol;
@@ -58,6 +60,9 @@ pub use types::{CircuitBreakerConfig, TraceIdFormat};
 
 // Re-export PROXY protocol codec
 pub use proxy_protocol::{ProxyHeader, ProxyProtocolError, Transport};
+
+// Re-export network utilities
+pub use net::{Cidr, CidrParseError};
 
 // Re-export inference types
 pub use inference::{

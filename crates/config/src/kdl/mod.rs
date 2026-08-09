@@ -29,6 +29,7 @@ pub use helpers::{
 
 pub use filters::parse_filter_definitions;
 pub use routes::parse_routes;
+pub(crate) use server::parse_proxy_protocol_config;
 pub use server::{parse_listeners, parse_server_config};
 pub use upstreams::{parse_upstream, parse_upstreams};
 

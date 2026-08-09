@@ -751,6 +751,18 @@ impl ProxyHttp for ZentinelProxy {
                         peer.options.read_timeout = Some(Duration::from_secs(upstream_secs));
                     }
 
+                    // Emit a PROXY protocol header on new upstream connections
+                    // when configured. The prefix participates in the pool
+                    // reuse hash, so connections never carry another client's
+                    // identity.
+                    if let Some(version) = pool.emit_proxy_protocol() {
+                        let client = session.client_addr().and_then(|a| a.as_inet()).copied();
+                        let server = session.server_addr().and_then(|a| a.as_inet()).copied();
+                        peer.options.connect_prefix = Some(
+                            crate::proxy_protocol::encode_upstream_prefix(version, client, server),
+                        );
+                    }
+
                     return Ok(Box::new(peer));
                 }
                 Err(e) => {

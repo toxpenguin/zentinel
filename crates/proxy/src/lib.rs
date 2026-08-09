@@ -73,6 +73,7 @@ pub mod metrics;
 pub mod metrics_server;
 pub mod otel;
 pub mod proxy;
+pub mod proxy_protocol;
 pub mod rate_limit;
 pub mod reload;
 pub mod routing;

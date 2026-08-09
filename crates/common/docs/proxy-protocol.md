@@ -112,14 +112,48 @@ dropped.
   Only the fixed inet portion is read; the rest (TLVs) is skipped, never
   allocated.
 
-## Next slice (datapath, requires the fork)
+## Datapath (shipped)
 
-1. **Inbound**: a listener-level decode that peeks the accepted stream, calls
-   `parse`, rewrites the connection's reported peer to `source`, and hands the
-   remaining bytes to the HTTP reader. Populates `ClientIp` (`types.rs`).
-2. **Outbound**: a connector-level emit that writes `encode_v1`/`encode_v2`
-   before the request on a **new** (non-reused, non-TLS) upstream connection —
-   once per connection.
-3. **Config**: `proxy-protocol` on listener (accept + trusted-source
-   allow-list) and on upstream (emit v1|v2), surfaced by `explain`/`lint`.
-   Lands only once 1–2 make it non-silent.
+Wired via two fork hooks (`zentinelproxy/pingora` branch `proxy-protocol-hooks`:
+`AcceptPreprocessor` + `PeerOptions.connect_prefix`):
+
+1. **Inbound** — `zentinel_proxy::proxy_protocol::ProxyProtocolAcceptor`
+   implements the fork's accept-time preprocessor: runs per connection before
+   TLS and buffering, enforces the listener's trusted-source CIDR list
+   (fail-closed: untrusted peer, garbage, or a stalled header all drop the
+   connection), decodes with `parse` using exact-byte reads (v2 length hints
+   are exact; v1 is read byte-wise to CRLF), and sets the fork's
+   `peer_addr_override` so `session.client_addr()` — and everything built on
+   it: logs, rate limiting, geo filtering — sees the real client.
+
+   ```kdl
+   listener "https" {
+       address "0.0.0.0:443"
+       proxy-protocol {
+           trusted "10.0.0.0/8"      // required, non-empty
+           header-timeout-ms 2000    // default
+       }
+   }
+   ```
+
+2. **Outbound** — `encode_upstream_prefix` builds the header from the
+   downstream connection's (possibly rewritten) endpoints; it is handed to the
+   fork as `PeerOptions.connect_prefix`, written once per **new** connection
+   before any TLS. The prefix participates in the connection reuse hash, so a
+   pooled connection never carries another client's identity — the cost is
+   per-client-connection pooling, the same trade HAProxy's `send-proxy` makes.
+   Unavailable or mixed-family endpoints degrade to a LOCAL/UNKNOWN header,
+   never a fabricated address.
+
+   ```kdl
+   upstream "apache" {
+       target "10.0.1.5:80"
+       proxy-protocol "v2"   // or "v1"
+   }
+   ```
+
+## Remaining
+
+- `explain`/`lint` surfacing of both settings.
+- `stack`/conformance scenario asserting real-IP propagation end-to-end
+  (IDEAS #16 depends on it).

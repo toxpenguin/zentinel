@@ -1140,6 +1140,30 @@ fn run_server(
         }
     }
 
+    // Install PROXY protocol acceptance for listeners that require it
+    match zentinel_proxy::proxy_protocol::ProxyProtocolAcceptor::from_listeners(&config.listeners) {
+        Ok(Some(acceptor)) => {
+            let enabled: Vec<&str> = config
+                .listeners
+                .iter()
+                .filter(|l| l.proxy_protocol.is_some())
+                .map(|l| l.id.as_str())
+                .collect();
+            info!(
+                listeners = ?enabled,
+                "PROXY protocol acceptance enabled (untrusted or headerless connections dropped)"
+            );
+            proxy_service
+                .endpoints()
+                .set_accept_preprocessor(std::sync::Arc::new(acceptor));
+        }
+        Ok(None) => {}
+        Err(e) => {
+            // Config was validated at load; failing here means it was not.
+            anyhow::bail!("invalid proxy-protocol configuration: {e}");
+        }
+    }
+
     // Add proxy service to server
     server.add_service(proxy_service);
 

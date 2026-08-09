@@ -381,6 +381,7 @@ impl ConfigTranslator {
                 keepalive_timeout_secs: 75,
                 max_concurrent_streams: 100,
                 keepalive_max_requests: None,
+                proxy_protocol: None,
             });
         }
 
@@ -871,6 +872,7 @@ impl ConfigTranslator {
             timeouts: UpstreamTimeouts::default(),
             tls: None,
             http_version: HttpVersionConfig::default(),
+            proxy_protocol: None,
         };
 
         Ok((upstream_id, Some(upstream)))
@@ -1289,6 +1291,7 @@ impl ConfigTranslator {
                 h2_ping_interval_secs: 30,
                 max_h2_streams: 100,
             },
+            proxy_protocol: None,
         };
 
         Ok((upstream_id, Some(upstream)))
@@ -1437,6 +1440,7 @@ impl ConfigTranslator {
             timeouts: UpstreamTimeouts::default(),
             tls: None, // Passthrough — no TLS termination at proxy
             http_version: HttpVersionConfig::default(),
+            proxy_protocol: None,
         };
 
         Ok((upstream_id, Some(upstream)))

@@ -60,6 +60,20 @@ Port binding configuration.
 | `request-timeout-secs` | `u64` | `60` | Request timeout |
 | `keepalive-timeout-secs` | `u64` | `75` | Keep-alive timeout |
 | `max-concurrent-streams` | `u32` | `100` | Max concurrent HTTP/2 streams |
+| `proxy-protocol` | `ProxyProtocolConfig` | - | Accept PROXY protocol v1/v2 headers (see below) |
+
+### ProxyProtocolConfig (listener)
+
+When present, **every** connection to the listener must arrive from a trusted
+source and begin with a valid PROXY v1/v2 header; anything else is dropped
+(fail-closed — an untrusted header would let any client spoof its address).
+The header's source address becomes the connection's client address for
+logging, rate limiting, and geo filtering.
+
+| Property | Type | Default | Description |
+|----------|------|---------|-------------|
+| `trusted` | `[string]` | **required** | CIDR blocks allowed to send a header (e.g. `"10.0.0.0/8"`); must be non-empty — use `"0.0.0.0/0"` to explicitly trust everything |
+| `header-timeout-ms` | `u64` | `2000` | Deadline for the complete header; stalled connections are dropped |
 
 ### TlsConfig
 
@@ -295,6 +309,7 @@ Backend server pool configuration.
 | `timeouts` | `UpstreamTimeouts` | `{}` | Timeout settings |
 | `tls` | `UpstreamTlsConfig` | - | TLS configuration |
 | `http-version` | `HttpVersionConfig` | `{}` | HTTP version settings |
+| `proxy-protocol` | `string` | - | Emit a PROXY header on new connections: `v1` or `v2`. The backend sees the real client address. Costs cross-client connection reuse (pooled connections are keyed per client identity) |
 
 ### UpstreamTarget
 

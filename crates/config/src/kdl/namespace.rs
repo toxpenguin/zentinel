@@ -237,6 +237,17 @@ fn parse_single_listener(node: &kdl::KdlNode) -> Result<ListenerConfig> {
         None
     };
 
+    let proxy_protocol = if let Some(children) = node.children() {
+        children
+            .nodes()
+            .iter()
+            .find(|n| n.name().value() == "proxy-protocol")
+            .map(|n| super::server::parse_proxy_protocol_config(n, &id))
+            .transpose()?
+    } else {
+        None
+    };
+
     Ok(ListenerConfig {
         id,
         address,
@@ -254,6 +265,7 @@ fn parse_single_listener(node: &kdl::KdlNode) -> Result<ListenerConfig> {
             .map(|v| v as u32)
             .unwrap_or(100),
         keepalive_max_requests: get_int_entry(node, "keepalive-max-requests").map(|v| v as u32),
+        proxy_protocol,
     })
 }
 

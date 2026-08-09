@@ -9,7 +9,9 @@ use zentinel_common::types::{HealthCheckType, LoadBalancingAlgorithm};
 
 use crate::{kdl::circuitbreaker_helper::parse_circuit_breaker_faildefault, upstreams::*};
 
-use super::helpers::{get_first_arg_string, get_int_entry, parse_upstream_targets};
+use super::helpers::{
+    get_first_arg_string, get_int_entry, get_string_entry, parse_upstream_targets,
+};
 
 //Parse a single upstream block
 pub fn parse_upstream(child: &kdl::KdlNode) -> Result<UpstreamConfig> {
@@ -139,6 +141,19 @@ pub fn parse_upstream(child: &kdl::KdlNode) -> Result<UpstreamConfig> {
             .map(parse_circuit_breaker_faildefault)
             .transpose()?;
 
+        // Parse PROXY protocol emission (proxy-protocol "v1"|"v2")
+        let proxy_protocol = get_string_entry(child, "proxy-protocol")
+            .map(|v| match v.to_lowercase().as_str() {
+                "v1" => Ok(ProxyProtocolVersion::V1),
+                "v2" => Ok(ProxyProtocolVersion::V2),
+                other => Err(anyhow!(
+                    "Invalid proxy-protocol version '{}' for upstream '{}'. Valid: v1, v2",
+                    other,
+                    id
+                )),
+            })
+            .transpose()?;
+
         trace!(
             upstream_id = %id,
             target_count = targets.len(),
@@ -162,6 +177,7 @@ pub fn parse_upstream(child: &kdl::KdlNode) -> Result<UpstreamConfig> {
             timeouts,
             tls,
             http_version,
+            proxy_protocol,
         })
     } else {
         Err(anyhow!("Child is not upstream stanza"))
@@ -968,5 +984,52 @@ mod tests {
         let cbconfig = upstream.circuit_breaker;
 
         assert!(cbconfig.is_none());
+    }
+
+    #[test]
+    fn parses_proxy_protocol_version() {
+        let kdl = r#"
+        upstreams {
+            upstream "with-v2" {
+                target "10.0.0.1:80"
+                proxy-protocol "v2"
+            }
+            upstream "with-v1" {
+                target "10.0.0.2:80"
+                proxy-protocol "v1"
+            }
+            upstream "without" {
+                target "10.0.0.3:80"
+            }
+        }
+        "#;
+
+        let upstreams = parse_kdl_upstreams(kdl).unwrap();
+        assert_eq!(
+            upstreams.get("with-v2").unwrap().proxy_protocol,
+            Some(ProxyProtocolVersion::V2)
+        );
+        assert_eq!(
+            upstreams.get("with-v1").unwrap().proxy_protocol,
+            Some(ProxyProtocolVersion::V1)
+        );
+        assert_eq!(upstreams.get("without").unwrap().proxy_protocol, None);
+    }
+
+    #[test]
+    fn invalid_proxy_protocol_version_is_rejected() {
+        let kdl = r#"
+        upstreams {
+            upstream "bad" {
+                target "10.0.0.1:80"
+                proxy-protocol "v3"
+            }
+        }
+        "#;
+
+        let err = parse_kdl_upstreams(kdl).unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("Invalid proxy-protocol version 'v3'"));
     }
 }

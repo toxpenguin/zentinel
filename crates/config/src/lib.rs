@@ -105,7 +105,9 @@ pub use routes::{
 };
 
 // Server
-pub use server::{ListenerConfig, ListenerProtocol, ServerConfig, SniCertificate, TlsConfig};
+pub use server::{
+    ListenerConfig, ListenerProtocol, ProxyProtocolConfig, ServerConfig, SniCertificate, TlsConfig,
+};
 
 // Re-export TraceIdFormat from common for convenience
 pub use zentinel_common::TraceIdFormat;
@@ -117,8 +119,8 @@ pub use zentinel_common::budget::{
 
 // Upstreams
 pub use upstreams::{
-    ConnectionPoolConfig, HealthCheck, HttpVersionConfig, UpstreamConfig, UpstreamPeer,
-    UpstreamTarget, UpstreamTimeouts, UpstreamTlsConfig,
+    ConnectionPoolConfig, HealthCheck, HttpVersionConfig, ProxyProtocolVersion, UpstreamConfig,
+    UpstreamPeer, UpstreamTarget, UpstreamTimeouts, UpstreamTlsConfig,
 };
 
 // Validation
@@ -804,6 +806,7 @@ impl Config {
                 timeouts: UpstreamTimeouts::default(),
                 tls: None,
                 http_version: HttpVersionConfig::default(),
+                proxy_protocol: None,
             },
         );
 
@@ -833,6 +836,7 @@ impl Config {
                 keepalive_timeout_secs: 75,
                 max_concurrent_streams: 100,
                 keepalive_max_requests: None,
+                proxy_protocol: None,
             }],
             routes: vec![RouteConfig {
                 id: "default".to_string(),

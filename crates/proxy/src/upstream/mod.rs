@@ -196,6 +196,8 @@ pub struct UpstreamPool {
     tls_sni: Option<String>,
     /// TLS configuration for upstream mTLS (client certificates)
     tls_config: Option<zentinel_config::UpstreamTlsConfig>,
+    /// PROXY protocol version to emit on new connections (None = never)
+    proxy_protocol: Option<zentinel_config::ProxyProtocolVersion>,
     /// Circuit breakers per target
     circuit_breakers: Arc<RwLock<HashMap<String, CircuitBreaker>>>,
     /// Pool statistics
@@ -917,6 +919,7 @@ impl UpstreamPool {
             tls_enabled,
             tls_sni,
             tls_config,
+            proxy_protocol: config.proxy_protocol,
             circuit_breakers: Arc::new(RwLock::new(circuit_breakers)),
             stats: Arc::new(PoolStats::default()),
         };
@@ -1204,6 +1207,12 @@ impl UpstreamPool {
             self.id.to_string(),
             "Failed to select upstream after max attempts",
         ))
+    }
+
+    /// PROXY protocol version to emit on new connections to this upstream
+    /// (None = never send a header).
+    pub fn emit_proxy_protocol(&self) -> Option<zentinel_config::ProxyProtocolVersion> {
+        self.proxy_protocol
     }
 
     /// Select next upstream peer

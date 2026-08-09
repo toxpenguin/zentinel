@@ -8,10 +8,11 @@ use zentinel_common::types::{TlsVersion, TraceIdFormat};
 
 use crate::server::{
     default_acme_storage, default_graceful_shutdown_timeout, default_keepalive_timeout,
-    default_max_concurrent_streams, default_max_connections, default_renewal_days,
-    default_request_timeout, default_worker_threads, AcmeChallengeType, AcmeConfig, AcmeKeyType,
-    DnsProviderConfig, DnsProviderType, ExternalAccountBinding, ListenerConfig, ListenerProtocol,
-    PropagationCheckConfig, ServerConfig, SniCertificate, TlsConfig,
+    default_max_concurrent_streams, default_max_connections,
+    default_proxy_protocol_header_timeout_ms, default_renewal_days, default_request_timeout,
+    default_worker_threads, AcmeChallengeType, AcmeConfig, AcmeKeyType, DnsProviderConfig,
+    DnsProviderType, ExternalAccountBinding, ListenerConfig, ListenerProtocol,
+    PropagationCheckConfig, ProxyProtocolConfig, ServerConfig, SniCertificate, TlsConfig,
 };
 
 use super::helpers::{get_bool_entry, get_first_arg_string, get_int_entry, get_string_entry};
@@ -108,6 +109,18 @@ pub fn parse_listeners(node: &kdl::KdlNode) -> Result<Vec<ListenerConfig>> {
                     None
                 };
 
+                // Parse PROXY protocol acceptance if present
+                let proxy_protocol = if let Some(children) = child.children() {
+                    children
+                        .nodes()
+                        .iter()
+                        .find(|n| n.name().value() == "proxy-protocol")
+                        .map(|pp_node| parse_proxy_protocol_config(pp_node, &id))
+                        .transpose()?
+                } else {
+                    None
+                };
+
                 trace!(
                     listener_id = %id,
                     address = %address,
@@ -134,6 +147,7 @@ pub fn parse_listeners(node: &kdl::KdlNode) -> Result<Vec<ListenerConfig>> {
                         .unwrap_or_else(default_max_concurrent_streams),
                     keepalive_max_requests: get_int_entry(child, "keepalive-max-requests")
                         .map(|v| v as u32),
+                    proxy_protocol,
                 });
             }
         }
@@ -144,6 +158,70 @@ pub fn parse_listeners(node: &kdl::KdlNode) -> Result<Vec<ListenerConfig>> {
         "Finished parsing listeners"
     );
     Ok(listeners)
+}
+
+/// Parse PROXY protocol acceptance block
+///
+/// Example KDL:
+/// ```kdl
+/// proxy-protocol {
+///     trusted "10.0.0.0/8" "192.168.0.0/16"
+///     header-timeout-ms 2000
+/// }
+/// ```
+pub(crate) fn parse_proxy_protocol_config(
+    node: &kdl::KdlNode,
+    listener_id: &str,
+) -> Result<ProxyProtocolConfig> {
+    let trusted: Vec<String> = if let Some(children) = node.children() {
+        children
+            .nodes()
+            .iter()
+            .filter(|n| n.name().value() == "trusted")
+            .flat_map(|n| {
+                n.entries()
+                    .iter()
+                    .filter_map(|e| e.value().as_string().map(|s| s.to_string()))
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
+
+    if trusted.is_empty() {
+        return Err(anyhow::anyhow!(
+            "proxy-protocol on listener '{}' requires at least one 'trusted' CIDR \
+             (headers from untrusted sources would let any client spoof its address; \
+             use \"0.0.0.0/0\" to explicitly trust everything)",
+            listener_id
+        ));
+    }
+
+    for cidr in &trusted {
+        cidr.parse::<zentinel_common::net::Cidr>().map_err(|e| {
+            anyhow::anyhow!(
+                "proxy-protocol on listener '{}': invalid trusted CIDR '{}': {}",
+                listener_id,
+                cidr,
+                e
+            )
+        })?;
+    }
+
+    let header_timeout_ms = get_int_entry(node, "header-timeout-ms")
+        .map(|v| v as u64)
+        .unwrap_or_else(default_proxy_protocol_header_timeout_ms);
+    if header_timeout_ms == 0 {
+        return Err(anyhow::anyhow!(
+            "proxy-protocol on listener '{}': header-timeout-ms must be greater than 0",
+            listener_id
+        ));
+    }
+
+    Ok(ProxyProtocolConfig {
+        trusted,
+        header_timeout_ms,
+    })
 }
 
 /// Parse TLS configuration block
@@ -762,5 +840,112 @@ mod tests {
         assert_eq!(public.namespace, None);
         assert_eq!(admin.namespace, Some("ops".to_string()));
         assert_eq!(admin.address, "127.0.0.1:9000");
+    }
+
+    fn parse_result(input: &str) -> Result<Vec<ListenerConfig>> {
+        let doc: kdl::KdlDocument = input.parse().unwrap();
+        let node = doc.nodes().first().unwrap();
+        parse_listeners(node)
+    }
+
+    #[test]
+    fn parses_proxy_protocol_block() {
+        let listeners = parse(
+            r#"
+            listeners {
+                listener "behind-lb" {
+                    address "0.0.0.0:8080"
+                    proxy-protocol {
+                        trusted "10.0.0.0/8" "192.168.0.0/16"
+                        header-timeout-ms 500
+                    }
+                }
+                listener "direct" {
+                    address "0.0.0.0:8081"
+                }
+            }
+            "#,
+        );
+
+        let lb = listeners.iter().find(|l| l.id == "behind-lb").unwrap();
+        let pp = lb.proxy_protocol.as_ref().unwrap();
+        assert_eq!(pp.trusted, vec!["10.0.0.0/8", "192.168.0.0/16"]);
+        assert_eq!(pp.header_timeout_ms, 500);
+
+        let direct = listeners.iter().find(|l| l.id == "direct").unwrap();
+        assert!(direct.proxy_protocol.is_none());
+    }
+
+    #[test]
+    fn proxy_protocol_timeout_defaults_when_omitted() {
+        let listeners = parse(
+            r#"
+            listeners {
+                listener "lb" {
+                    address "0.0.0.0:8080"
+                    proxy-protocol {
+                        trusted "10.0.0.0/8"
+                    }
+                }
+            }
+            "#,
+        );
+        let pp = listeners[0].proxy_protocol.as_ref().unwrap();
+        assert_eq!(pp.header_timeout_ms, 2000);
+    }
+
+    #[test]
+    fn proxy_protocol_without_trusted_is_rejected() {
+        let err = parse_result(
+            r#"
+            listeners {
+                listener "lb" {
+                    address "0.0.0.0:8080"
+                    proxy-protocol {
+                        header-timeout-ms 500
+                    }
+                }
+            }
+            "#,
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("at least one 'trusted' CIDR"));
+    }
+
+    #[test]
+    fn proxy_protocol_with_invalid_cidr_is_rejected() {
+        let err = parse_result(
+            r#"
+            listeners {
+                listener "lb" {
+                    address "0.0.0.0:8080"
+                    proxy-protocol {
+                        trusted "10.0.0.0"
+                    }
+                }
+            }
+            "#,
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("invalid trusted CIDR '10.0.0.0'"));
+    }
+
+    #[test]
+    fn proxy_protocol_zero_timeout_is_rejected() {
+        let err = parse_result(
+            r#"
+            listeners {
+                listener "lb" {
+                    address "0.0.0.0:8080"
+                    proxy-protocol {
+                        trusted "10.0.0.0/8"
+                        header-timeout-ms 0
+                    }
+                }
+            }
+            "#,
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("must be greater than 0"));
     }
 }

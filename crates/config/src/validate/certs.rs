@@ -230,6 +230,7 @@ mod tests {
             keepalive_timeout_secs: 75,
             max_concurrent_streams: 100,
             keepalive_max_requests: None,
+            proxy_protocol: None,
         }
     }
 
