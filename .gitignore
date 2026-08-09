@@ -37,3 +37,5 @@ tests/chaos/results/
 .tokensave/
 .claude/.headroom_wrap_marker.json
 .claude/memory/
+__pycache__/
+*.pyc
