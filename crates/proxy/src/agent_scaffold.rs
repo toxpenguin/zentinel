@@ -31,6 +31,19 @@ pub struct AgentArgs {
 enum AgentCommand {
     /// Scaffold a new external agent project.
     New(NewArgs),
+    /// Run protocol conformance checks against a running agent socket.
+    Conform(ConformArgs),
+}
+
+#[derive(Args, Debug)]
+struct ConformArgs {
+    /// Unix socket the agent is listening on.
+    #[arg(long)]
+    socket: PathBuf,
+
+    /// Emit the report as JSON (for CI).
+    #[arg(long)]
+    json: bool,
 }
 
 #[derive(Args, Debug)]
@@ -56,6 +69,28 @@ struct NewArgs {
 pub fn run_agent_command(args: AgentArgs) -> Result<()> {
     match args.command {
         AgentCommand::New(new) => new_agent(&new.name, &new.path, new.force),
+        AgentCommand::Conform(c) => conform(&c.socket, c.json),
+    }
+}
+
+/// Run the conformance suite against a live agent socket. Exits `1` (via
+/// error) when any check fails so CI can gate on it.
+fn conform(socket: &Path, json: bool) -> Result<()> {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?;
+    let report = runtime.block_on(zentinel_agent_protocol::v2::conformance::run(socket));
+
+    if json {
+        println!("{}", serde_json::to_string_pretty(&report)?);
+    } else {
+        print!("{}", report.render_text());
+    }
+
+    if report.passed {
+        Ok(())
+    } else {
+        anyhow::bail!("agent failed conformance");
     }
 }
 

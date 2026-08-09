@@ -10,6 +10,7 @@
 
 mod capabilities;
 pub mod client;
+pub mod conformance;
 mod control;
 mod health;
 mod metrics;

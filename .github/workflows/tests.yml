@@ -91,3 +91,18 @@ jobs:
         env:
           ZENTINEL_BIN: ${{ github.workspace }}/target/debug/zentinel
         run: go test -run TestLiveProxy -v ./...
+
+      # Conformance badge: the Go SDK example agent must pass the
+      # language-agnostic protocol suite (zentinel agent conform).
+      - name: Go SDK conformance
+        working-directory: sdk/go
+        run: |
+          go run ./examples/echo --socket /tmp/conform-echo.sock &
+          AGENT_PID=$!
+          for i in $(seq 1 50); do
+            [ -S /tmp/conform-echo.sock ] && break
+            sleep 0.2
+          done
+          ${{ github.workspace }}/target/debug/zentinel agent conform \
+            --socket /tmp/conform-echo.sock
+          kill $AGENT_PID

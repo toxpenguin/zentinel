@@ -57,10 +57,15 @@ v2 UDS framing, handshake + capability negotiation from implemented optional
 interfaces, correlation-ID response routing, ping/pong, graceful shutdown.
 Agents implement `OnRequestHeaders` and optionally body/response/complete
 interfaces; wire shapes golden-tested against serde output. CI job `go-sdk`
-(gofmt + vet + test). Note: `conformance/` is Gateway API conformance, not
-agent-wire (the original premise was wrong) — an agent-protocol conformance
-suite ("passes zentinel-conformance vX" badge) is still open, as are the
-Python SDK and gRPC/reverse-connection transports.
+(gofmt + vet + test), plus a live-proxy smoke test in tests.yml (real
+zentinel binary ↔ Go agent over UDS). Conformance badge: `zentinel agent
+conform --socket <path>` (`v2::conformance` in agent-protocol, 6 checks,
+`--json` for CI) — the Go example agent passes zentinel-conformance v1 in
+tests.yml; the harness also caught the Rust reference server accepting
+unknown protocol versions (fixed in `on_handshake` default). Note:
+`conformance/` is Gateway API conformance, not agent-wire (the original
+premise was wrong). Still open: Python SDK (validate with the harness),
+gRPC/reverse-connection transports.
 
 ### 7. Agent starter template repo / `zentinel agent new` — ✅ done
 Scaffold generator producing a minimal agent (echo-style, from `agents/echo/`) with Dockerfile, conformance test wiring, and KDL snippet to register it. Lowers the barrier from "read the protocol docs" to "edit one function".

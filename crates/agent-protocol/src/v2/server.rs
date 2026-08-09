@@ -87,8 +87,20 @@ pub trait AgentHandlerV2: Send + Sync {
     fn capabilities(&self) -> AgentCapabilities;
 
     /// Handle handshake request.
-    async fn on_handshake(&self, _request: HandshakeRequest) -> HandshakeResponse {
-        // Default: accept handshake with our capabilities
+    async fn on_handshake(&self, request: HandshakeRequest) -> HandshakeResponse {
+        // Default: accept only when the proxy offers a version we speak.
+        // Silently accepting an unknown version would defer the breakage to
+        // the first event frame, where it is much harder to diagnose.
+        if !request
+            .supported_versions
+            .contains(&super::PROTOCOL_VERSION_2)
+        {
+            return HandshakeResponse::failure(format!(
+                "agent speaks protocol v{}, proxy offered {:?}",
+                super::PROTOCOL_VERSION_2,
+                request.supported_versions
+            ));
+        }
         HandshakeResponse::success(self.capabilities())
     }
 

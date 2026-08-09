@@ -73,6 +73,19 @@ zentinelagent.Redirect("https://sso.example.com/login", 302)
 zentinelagent.Challenge("captcha", map[string]string{"type": "recaptcha"})
 ```
 
+## Conformance
+
+The SDK's example agent passes **zentinel-conformance v1**:
+
+```bash
+go run ./examples/echo --socket /tmp/echo.sock &
+zentinel agent conform --socket /tmp/echo.sock
+```
+
+The suite (handshake, version rejection, decision shape, correlation-ID
+routing, ping/pong, malformed-payload resilience) is language-agnostic —
+any agent on any stack can be checked the same way. `--json` for CI.
+
 ## Wire compatibility
 
 The wire contract is defined by the Rust implementation in
