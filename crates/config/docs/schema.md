@@ -462,26 +462,21 @@ External processing agent configuration.
 
 ### AgentTransport
 
+The transport is a direct child of the `agent` block (no `transport {}`
+wrapper); exactly one of `unix-socket`, `grpc`, or `http` is required:
+
 ```kdl
-// Unix socket
-transport {
-    unix-socket "/var/run/agent.sock"
-}
+// Unix socket ("path" attribute or bare argument)
+unix-socket "/var/run/agent.sock"
 
 // gRPC
-transport {
-    grpc {
-        address "localhost:50051"
-        tls { ... }
-    }
+grpc address="localhost:50051" {
+    tls { ... }
 }
 
 // HTTP
-transport {
-    http {
-        url "http://localhost:8080/agent"
-        tls { ... }
-    }
+http url="http://localhost:8080/agent" {
+    tls { ... }
 }
 ```
 

@@ -43,9 +43,7 @@ Register in Zentinel's KDL config:
 agents {
     agent "my-agent" {
         type "auth"
-        transport {
-            unix-socket "/run/zentinel/my-agent.sock"
-        }
+        unix-socket "/run/zentinel/my-agent.sock"
         events "request_headers"
         timeout-ms 100
         failure-mode "closed"

@@ -75,3 +75,19 @@ jobs:
 
       - name: Run tests
         run: cargo test --workspace
+
+      # Live-proxy smoke test for the Go agent SDK: real zentinel binary,
+      # in-process Go agent over UDS, asserts decisions apply to real traffic.
+      - name: Install Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: sdk/go/go.mod
+
+      - name: Build proxy binary
+        run: cargo build --bin zentinel
+
+      - name: Go SDK live-proxy smoke test
+        working-directory: sdk/go
+        env:
+          ZENTINEL_BIN: ${{ github.workspace }}/target/debug/zentinel
+        run: go test -run TestLiveProxy -v ./...
