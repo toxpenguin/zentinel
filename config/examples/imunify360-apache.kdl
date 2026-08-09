@@ -1,0 +1,130 @@
+// Example: Zentinel in front of Apache + Imunify360 (hosting-stack coexistence)
+//
+// Zentinel is the public edge; Apache (with Imunify360's ModSecurity rules,
+// greylisting, captcha and blocklists) stays on loopback. The load-bearing
+// piece is `proxy-protocol "v2"` on the upstream: without it every request
+// reaches Apache from 127.0.0.1 and Imunify360's IP-based protections are
+// blind. With it, mod_remoteip restores the real client address before any
+// Imunify hook runs.
+//
+// Apache side (2.4.31+), once per server:
+//
+//     LoadModule remoteip_module modules/mod_remoteip.so
+//     RemoteIPProxyProtocol On
+//     # Only the Zentinel host may speak PROXY protocol:
+//     RemoteIPProxyProtocolExceptions disabled-for-none
+//     Listen 127.0.0.1:8080
+//
+// After that, %a in LogFormat, mod_security collections keyed by REMOTE_ADDR,
+// and Imunify360's greylist/captcha all see the true client IP.
+//
+// Trade-off (by design, surfaced by `zentinel explain`): with PROXY protocol
+// enabled, pooled upstream connections are keyed per client identity, so
+// cross-client connection reuse to Apache is lost. Apache on loopback makes
+// the extra connection cost negligible.
+//
+// Real-IP propagation is conformance-tested end-to-end in
+// crates/proxy/tests/proxy_protocol_e2e_test.rs (trusted-LB inject, backend
+// decode, spoof rejection). See crates/proxy/docs/imunify360.md for the full
+// recipe and verification steps.
+
+system {
+    worker-threads 0
+    max-connections 10000
+    graceful-shutdown-timeout-secs 30
+}
+
+listeners {
+    // Public HTTP. Kept open for ACME HTTP-01 traffic (both Zentinel's own
+    // and cPanel AutoSSL's — see the "acme-passthrough" route).
+    listener "http" {
+        address "0.0.0.0:80"
+        protocol "http"
+        request-timeout-secs 60
+    }
+
+    // Public HTTPS. Zentinel owns the edge certificate; Apache never sees
+    // TLS. Swap the static files for an `acme { }` block (see
+    // config/examples/acme-*.kdl) to let Zentinel manage issuance itself.
+    listener "https" {
+        address "0.0.0.0:443"
+        protocol "https"
+        request-timeout-secs 60
+        tls {
+            cert-file "/etc/zentinel/certs/edge.crt"
+            key-file "/etc/zentinel/certs/edge.key"
+        }
+    }
+}
+
+upstreams {
+    // Apache with Imunify360, loopback only. The proxy-protocol line is what
+    // makes the whole coexistence work — do not remove it while
+    // RemoteIPProxyProtocol is On (Apache would reject the bare TCP preface,
+    // and without either, Imunify360 sees only 127.0.0.1).
+    upstream "apache" {
+        target "127.0.0.1:8080"
+        load-balancing "round_robin"
+        proxy-protocol "v2"
+
+        health-check {
+            interval-secs 10
+            timeout-secs 5
+            path "/"
+            expected-status 200
+        }
+    }
+}
+
+routes {
+    // cPanel AutoSSL / certbot on the Apache host still answers its own
+    // HTTP-01 challenges. Highest priority so nothing shadows issuance.
+    // (When Zentinel's own `acme { }` block is used instead, Zentinel answers
+    // its challenges internally before routing; this route then only carries
+    // Apache-side issuance.)
+    route "acme-passthrough" {
+        priority "high"
+        matches {
+            path-prefix "/.well-known/acme-challenge/"
+        }
+        upstream "apache"
+        policies {
+            timeout-secs 30
+            failure-mode "closed"
+        }
+    }
+
+    // WebSocket upgrade paths (cPanel apps, chat widgets, etc.) pass through
+    // with long-lived timeouts. Imunify360 still sees the real client IP on
+    // the upgrade request via the PROXY header.
+    route "websocket" {
+        priority "high"
+        matches {
+            path-prefix "/ws"
+        }
+        upstream "apache"
+        websocket {
+            enabled #true
+            ping-interval-secs 30
+            ping-timeout-secs 10
+        }
+        policies {
+            timeout-secs 3600
+            failure-mode "closed"
+        }
+    }
+
+    // Everything else: straight to Apache. Imunify360 does the WAF work
+    // there; keep Zentinel's edge behavior boring and explainable.
+    route "default" {
+        priority "normal"
+        matches {
+            path-prefix "/"
+        }
+        upstream "apache"
+        policies {
+            timeout-secs 60
+            failure-mode "closed"
+        }
+    }
+}

@@ -169,3 +169,9 @@ for the connection *and* what the backend decodes from Zentinel's emitted
 header (v1 and v2), with application bytes intact — plus the security half:
 the same wire bytes from an untrusted source drop the connection and leave
 the socket peer address untouched.
+
+## Deployment recipe
+
+Zentinel → Apache + Imunify360 coexistence (the motivating use case, IDEAS
+#16): `crates/proxy/docs/imunify360.md` + validated example
+`config/examples/imunify360-apache.kdl`.

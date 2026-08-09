@@ -43,6 +43,7 @@ Example configurations demonstrating Zentinel features and patterns.
 | [shadow-traffic.kdl](shadow-traffic.kdl) | Traffic mirroring for canary deployments and A/B testing |
 | [distributed-rate-limit.kdl](distributed-rate-limit.kdl) | Redis and Memcached rate limiting backends |
 | [http-caching.kdl](http-caching.kdl) | Response caching with memory, disk, and hybrid storage |
+| [imunify360-apache.kdl](imunify360-apache.kdl) | Edge proxy in front of Apache + Imunify360 with real client IPs via PROXY protocol |
 
 ### Shadow Traffic Features
 

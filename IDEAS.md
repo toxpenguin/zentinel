@@ -102,8 +102,16 @@ Sidecar (not core) that watches panel account/domain state — e.g. cPanel's `/e
 ### 15. Per-tenant rate limiting aligned with CloudLinux LVE
 CloudLinux isolates tenants at the kernel level (LVE) *after* the request hits Apache. Zentinel can enforce the same tenancy boundary earlier: rate-limit/concurrency keys derived from the mapped account (via #14's domain→user mapping), so one tenant's traffic spike is shed at the edge instead of consuming Apache slots and LVE budget. Bounded per-tenant, explicit limits in KDL — very on-manifesto.
 
-### 16. Imunify360 coexistence recipe + conformance scenario
-Documented, tested deployment: Zentinel → Apache + Imunify360, with #12 wired so greylisting/captcha/blocklists see real client IPs, and WebSocket/ACME paths passing through correctly. Add a `stack`/conformance scenario that asserts real-IP propagation end-to-end. Turns "does it work with Imunify?" from a forum question into a CI-verified yes.
+### 16. Imunify360 coexistence recipe + conformance scenario — ✅ done (recipe + CI conformance)
+Recipe: `crates/proxy/docs/imunify360.md` + validated example
+`config/examples/imunify360-apache.kdl` — upstream `proxy-protocol "v2"` →
+Apache `mod_remoteip RemoteIPProxyProtocol On`, so greylisting/captcha/
+blocklists/ModSecurity see real client IPs; ACME HTTP-01 passthrough route for
+cPanel AutoSSL; WebSocket routes with long timeouts. Conformance:
+`proxy_protocol_e2e_test.rs` CI-asserts the propagation chain + spoof
+rejection. Not covered here (deliberately): AutoSSL cert reuse at the edge
+(#18), LVE-aligned per-tenant limits (#15), live Apache+Imunify soak (needs
+licensed Imunify test box — manual verification steps in the doc).
 
 ### 17. Named backend profiles for common stacks
 Explicit, opt-in KDL presets — `profile "apache-shared-hosting"`, `profile "litespeed"`, `profile "php-fpm-behind-apache"` — bundling tuned retry/keepalive/timeout values (e.g. tolerate Apache graceful-restart connection resets). Rendered into the config visibly by `zentinel explain`/`lint` so nothing is hidden; profiles are shorthand, not magic defaults.
