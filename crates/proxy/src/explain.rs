@@ -147,6 +147,8 @@ pub struct UpstreamInfo {
     pub load_balancing: Option<String>,
     /// Number of backend targets, when the upstream is defined.
     pub target_count: Option<usize>,
+    /// PROXY protocol version emitted on new connections (`v1`/`v2`), if any.
+    pub proxy_protocol: Option<String>,
 }
 
 /// A route that was evaluated but did not match.
@@ -269,12 +271,20 @@ fn build_report(config: &Config, request: &ExplainRequest, trace: &ExplainTrace)
                     defined: true,
                     load_balancing: Some(format!("{:?}", up.load_balancing)),
                     target_count: Some(up.targets.len()),
+                    proxy_protocol: up.proxy_protocol.map(|v| {
+                        match v {
+                            zentinel_config::ProxyProtocolVersion::V1 => "v1",
+                            zentinel_config::ProxyProtocolVersion::V2 => "v2",
+                        }
+                        .to_string()
+                    }),
                 },
                 None => UpstreamInfo {
                     name: name.clone(),
                     defined: false,
                     load_balancing: None,
                     target_count: None,
+                    proxy_protocol: None,
                 },
             });
 
@@ -418,6 +428,13 @@ impl ExplainReport {
                             u.load_balancing.as_deref().unwrap_or("?"),
                             u.target_count.unwrap_or(0)
                         );
+                        if let Some(pp) = &u.proxy_protocol {
+                            let _ = writeln!(
+                                out,
+                                "  PROXY protocol: emits {pp} header on new connections \
+                                 (backend sees real client IP; per-client connection pooling)"
+                            );
+                        }
                     }
                     Some(u) => {
                         let _ = writeln!(
@@ -503,6 +520,43 @@ mod tests {
             host: host.to_string(),
             headers: HashMap::new(),
         }
+    }
+
+    #[test]
+    fn upstream_proxy_protocol_is_surfaced() {
+        let config = Config::from_kdl(
+            r#"
+            system { worker-threads 0 }
+            listeners {
+                listener "http" { address "0.0.0.0:8080" }
+            }
+            routes {
+                route "api" {
+                    matches { path-prefix "/" }
+                    upstream "backend"
+                }
+            }
+            upstreams {
+                upstream "backend" {
+                    target "127.0.0.1:9000"
+                    proxy-protocol "v2"
+                }
+            }
+            "#,
+        )
+        .unwrap();
+
+        let report = explain(&config, &req("GET", "/x", "example.com")).unwrap();
+        let m = report.matched.as_ref().expect("should match");
+        assert_eq!(
+            m.upstream
+                .as_ref()
+                .and_then(|u| u.proxy_protocol.as_deref()),
+            Some("v2")
+        );
+        assert!(report
+            .render_text()
+            .contains("PROXY protocol: emits v2 header"));
     }
 
     #[test]

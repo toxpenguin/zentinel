@@ -72,6 +72,22 @@ pub fn lint_config(config: &Config) -> ValidationResult {
                 listener.address
             )));
         }
+
+        // PROXY protocol trusting the whole address space defeats the
+        // spoofing protection unless the network itself is isolated.
+        if let Some(ref pp) = listener.proxy_protocol {
+            for cidr in &pp.trusted {
+                if cidr == "0.0.0.0/0" || cidr == "::/0" {
+                    result.add_warning(ValidationWarning::new(format!(
+                        "Listener '{}' accepts PROXY protocol from '{}' (every source): \
+                         any client that can reach this listener can spoof its address. \
+                         Only safe when the listener is reachable exclusively from \
+                         trusted load balancers",
+                        listener.id, cidr
+                    )));
+                }
+            }
+        }
     }
 
     // Check for HSTS header when TLS is enabled
@@ -581,6 +597,42 @@ mod tests {
             keepalive_max_requests: None,
             proxy_protocol: None,
         }
+    }
+
+    #[test]
+    fn lint_warns_on_proxy_protocol_trusting_every_source() {
+        let mut config = Config::default_for_testing();
+        let mut listener = test_listener_config("0.0.0.0:8080");
+        listener.proxy_protocol = Some(crate::server::ProxyProtocolConfig {
+            trusted: vec!["0.0.0.0/0".to_string()],
+            header_timeout_ms: 2000,
+        });
+        config.listeners = vec![listener];
+
+        let result = lint_config(&config);
+
+        assert!(result
+            .warnings
+            .iter()
+            .any(|w| w.message.contains("can spoof its address")));
+    }
+
+    #[test]
+    fn lint_accepts_scoped_proxy_protocol_trust() {
+        let mut config = Config::default_for_testing();
+        let mut listener = test_listener_config("0.0.0.0:8080");
+        listener.proxy_protocol = Some(crate::server::ProxyProtocolConfig {
+            trusted: vec!["10.0.0.0/8".to_string()],
+            header_timeout_ms: 2000,
+        });
+        config.listeners = vec![listener];
+
+        let result = lint_config(&config);
+
+        assert!(!result
+            .warnings
+            .iter()
+            .any(|w| w.message.contains("can spoof its address")));
     }
 
     #[test]

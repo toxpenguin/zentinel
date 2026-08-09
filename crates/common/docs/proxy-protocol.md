@@ -152,8 +152,15 @@ Wired via two fork hooks (`zentinelproxy/pingora` branch `proxy-protocol-hooks`:
    }
    ```
 
+## Operator surface
+
+- `zentinel explain` shows the matched route's upstream PROXY emission
+  (version + pooling implication) in text and JSON reports.
+- `zentinel lint` warns when a listener's `trusted` list contains
+  `0.0.0.0/0` or `::/0` — any client that can reach the listener could
+  spoof its address; only safe on isolated networks.
+
 ## Remaining
 
-- `explain`/`lint` surfacing of both settings.
 - `stack`/conformance scenario asserting real-IP propagation end-to-end
   (IDEAS #16 depends on it).
