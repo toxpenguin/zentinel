@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "zentinel-agent"
+version = "0.1.0"
+description = "Zentinel agent SDK: write external agents for the Zentinel proxy (agent protocol v2 over Unix sockets)"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Apache-2.0" }
+keywords = ["zentinel", "proxy", "agent", "waf"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Topic :: Internet :: Proxy Servers",
+]
+
+[project.urls]
+Homepage = "https://zentinelproxy.io"
+Source = "https://github.com/zentinelproxy/zentinel"
+
+[tool.setuptools.packages.find]
+where = ["src"]

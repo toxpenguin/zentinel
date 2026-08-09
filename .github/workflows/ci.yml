@@ -186,3 +186,19 @@ jobs:
       - name: Test
         working-directory: sdk/go
         run: go test ./...
+
+  python-sdk:
+    name: Python agent SDK
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Install Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: Test
+        working-directory: sdk/python
+        run: python3 -m unittest discover -s tests -v

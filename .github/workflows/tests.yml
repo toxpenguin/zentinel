@@ -106,3 +106,16 @@ jobs:
           ${{ github.workspace }}/target/debug/zentinel agent conform \
             --socket /tmp/conform-echo.sock
           kill $AGENT_PID
+
+      - name: Python SDK conformance
+        working-directory: sdk/python
+        run: |
+          python3 examples/echo.py --socket /tmp/conform-py.sock &
+          AGENT_PID=$!
+          for i in $(seq 1 50); do
+            [ -S /tmp/conform-py.sock ] && break
+            sleep 0.2
+          done
+          ${{ github.workspace }}/target/debug/zentinel agent conform \
+            --socket /tmp/conform-py.sock
+          kill $AGENT_PID

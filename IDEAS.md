@@ -64,8 +64,12 @@ conform --socket <path>` (`v2::conformance` in agent-protocol, 6 checks,
 tests.yml; the harness also caught the Rust reference server accepting
 unknown protocol versions (fixed in `on_handshake` default). Note:
 `conformance/` is Gateway API conformance, not agent-wire (the original
-premise was wrong). Still open: Python SDK (validate with the harness),
-gRPC/reverse-connection transports.
+premise was wrong). Python SDK: `sdk/python` (`zentinel-agent`, stdlib-only
+asyncio, Python 3.10+) — subclass `Agent`, override events; overridden
+methods auto-advertised; example agent passes zentinel-conformance v1
+(gated in tests.yml, unit tests in ci.yml `python-sdk`). **#6 done** except
+deferred transports: gRPC + reverse-connection (YAGNI until a cross-host
+agent user shows up).
 
 ### 7. Agent starter template repo / `zentinel agent new` — ✅ done
 Scaffold generator producing a minimal agent (echo-style, from `agents/echo/`) with Dockerfile, conformance test wiring, and KDL snippet to register it. Lowers the barrier from "read the protocol docs" to "edit one function".
