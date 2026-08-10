@@ -202,3 +202,27 @@ jobs:
       - name: Test
         working-directory: sdk/python
         run: python3 -m unittest discover -s tests -v
+
+  coraza-waf-agent:
+    name: Coraza WAF agent
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Install Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: agents/coraza-waf/go.mod
+
+      - name: Vet
+        working-directory: agents/coraza-waf
+        run: |
+          test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
+          go vet ./...
+
+      # The live-proxy test needs a zentinel binary and skips without one; it
+      # runs in tests.yml, where the proxy is already built.
+      - name: Test
+        working-directory: agents/coraza-waf
+        run: go test ./...

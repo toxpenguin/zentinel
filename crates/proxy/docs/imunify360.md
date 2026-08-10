@@ -93,7 +93,11 @@ PROXY protocol: emits v2 header on new connections (backend sees real client IP;
 ## Status / limits
 
 - Greylisting, captcha, blocklists, ModSecurity: covered by real-IP
-  propagation (above).
+  propagation (above). Apache keeps the WAF role in this recipe. To move rule
+  enforcement to the edge instead — same SecLang rules, same native audit-log
+  format — run the Coraza agent (`agents/coraza-waf/README.md`) pointed at the
+  panel's exported rule directory; the two can also run side by side while you
+  compare verdicts.
 - cPanel AutoSSL certificate *reuse* at the Zentinel edge (serving the certs
   AutoSSL obtained): not wired here — IDEAS #18.
 - Per-tenant LVE-aligned rate limiting: IDEAS #15.

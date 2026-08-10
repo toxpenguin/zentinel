@@ -119,3 +119,24 @@ jobs:
           ${{ github.workspace }}/target/debug/zentinel agent conform \
             --socket /tmp/conform-py.sock
           kill $AGENT_PID
+
+      # WAF agent: real proxy in front of a test upstream, SQLi must not reach
+      # the backend and must land in the ModSecurity-native audit log.
+      - name: Coraza WAF agent live-proxy test
+        working-directory: agents/coraza-waf
+        env:
+          ZENTINEL_BIN: ${{ github.workspace }}/target/debug/zentinel
+        run: go test -run TestLiveProxy -v ./...
+
+      - name: Coraza WAF agent conformance
+        working-directory: agents/coraza-waf
+        run: |
+          go run . --socket /tmp/conform-waf.sock --rules rules &
+          AGENT_PID=$!
+          for i in $(seq 1 50); do
+            [ -S /tmp/conform-waf.sock ] && break
+            sleep 0.2
+          done
+          ${{ github.workspace }}/target/debug/zentinel agent conform \
+            --socket /tmp/conform-waf.sock
+          kill $AGENT_PID

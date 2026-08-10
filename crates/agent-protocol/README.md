@@ -155,10 +155,11 @@ See [Architecture & Flow Diagrams](./docs/architecture.md) for detailed diagrams
 
 ## Reference Implementations
 
-Two reference agents are available as standalone projects:
+Reference agents live in this repository under `agents/`:
 
-- **[echo agent](https://github.com/zentinelproxy/zentinel)** (`agents/echo/`) — Adds an `X-Agent-Processed: true` header to all requests. Useful for verifying agent connectivity.
-- **[data-masking agent](https://github.com/zentinelproxy/zentinel)** (`agents/data-masking/`) — Masks sensitive data (SSNs, credit cards, emails) in response bodies. Example of body streaming and response transformation.
+- **echo agent** (`agents/echo/`) — Adds an `X-Agent-Processed: true` header to all requests. Useful for verifying agent connectivity.
+- **data-masking agent** (`agents/data-masking/`) — Masks sensitive data (SSNs, credit cards, emails) in response bodies. Example of body streaming and response transformation.
+- **coraza-waf agent** (`agents/coraza-waf/`) — Production WAF: runs ModSecurity SecLang rulesets (OWASP CRS, Comodo, Imunify360 exports) through Coraza and writes ModSecurity-native audit logs. Built on the Go SDK; passes `zentinel agent conform`.
 
 ## Language SDKs
 
@@ -166,9 +167,9 @@ Official SDKs are available for building agents in your preferred language:
 
 | Language | Repository | Installation |
 |----------|------------|--------------|
-| **Python** | [zentinel-agent-python-sdk](https://github.com/zentinelproxy/zentinel-agent-python-sdk) | `pip install zentinel-agent-sdk` |
+| **Go** | in-repo: `sdk/go` | build from a checkout (not tagged yet) |
+| **Python** | in-repo: `sdk/python` | `pip install ./sdk/python` |
 | **TypeScript** | [zentinel-agent-typescript-sdk](https://github.com/zentinelproxy/zentinel-agent-typescript-sdk) | `npm install zentinel-agent-sdk` |
-| **Go** | [zentinel-agent-go-sdk](https://github.com/zentinelproxy/zentinel-agent-go-sdk) | `go get github.com/zentinelproxy/zentinel-agent-go-sdk` |
 | **Rust** | [zentinel-agent-rust-sdk](https://github.com/zentinelproxy/zentinel-agent-rust-sdk) | `zentinel-agent-sdk = "0.1"` |
 | **Elixir** | [zentinel-agent-elixir-sdk](https://github.com/zentinelproxy/zentinel-agent-elixir-sdk) | `{:zentinel_agent_sdk, github: "zentinelproxy/zentinel-agent-elixir-sdk"}` |
 

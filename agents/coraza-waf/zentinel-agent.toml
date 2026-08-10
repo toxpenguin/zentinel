@@ -1,0 +1,24 @@
+# Zentinel Agent Registry Manifest
+# Coraza WAF Agent - ModSecurity-compatible rule enforcement at the edge
+
+[agent]
+name = "zentinel-coraza-waf"
+version = "0.1.0"
+description = "ModSecurity-compatible WAF agent running SecLang rulesets (OWASP CRS, Comodo, Imunify360 exports) via Coraza"
+authors = ["Zentinel Contributors"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/zentinelproxy/zentinel"
+
+[protocol]
+version = "2"
+events = ["request_headers", "request_body", "response_headers", "response_body", "request_complete"]
+
+[compatibility]
+zentinel-proxy = ">=0.1.0"
+zentinel-agent-protocol = "2"
+
+[registry]
+homepage = "https://github.com/zentinelproxy/zentinel/tree/main/agents/coraza-waf"
+documentation = "https://github.com/zentinelproxy/zentinel/blob/main/agents/coraza-waf/README.md"
+keywords = ["zentinel", "agent", "waf", "modsecurity", "coraza", "seclang"]
+categories = ["security"]

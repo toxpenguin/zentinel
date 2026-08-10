@@ -110,8 +110,24 @@ Generate KDL from existing `VirtualHost`/`server` blocks: domains → routes (SN
 Codebase has `ClientIp.forwarded_for` but no PROXY protocol support. This is the prerequisite for the whole compat story — do it first.
 - **Status (✅ datapath done, pending fork push):** codec in `zentinel-common::proxy_protocol` (encode/decode, fuzzed). Fork hooks landed on `zentinelproxy/pingora` branch `proxy-protocol-hooks` (`AcceptPreprocessor` pre-TLS accept hook + `PeerOptions.connect_prefix` with reuse-hash isolation). Zentinel wiring: inbound `ProxyProtocolAcceptor` (trusted-CIDR fail-closed, exact-byte reads, peer rewrite feeding logs/rate-limit/geo) + outbound `connect_prefix` emit per upstream (`proxy-protocol "v1"|"v2"`), KDL config on listener and upstream. Operator surface: `explain` shows upstream emission, `lint` warns on trust-all CIDRs. Conformance: `proxy_protocol_e2e_test.rs` asserts LB→Zentinel→backend real-IP propagation + spoof rejection over real sockets (the #16 prerequisite). **#12 complete.**
 
-### 13. ModSecurity-compatible WAF agent (Coraza-based)
-External agent (Go — synergy with SDK idea #6) embedding [Coraza](https://coraza.io) to execute SecLang rulesets: OWASP CRS, Comodo/Imunify360 modsec rule exports, custom vendor rules. Hosting operators keep their existing rule investment while moving WAF enforcement to the edge. Emit ModSecurity audit-log format so existing SIEM/fail2ban pipelines keep working. Fits the architecture exactly: complex WAF logic isolated in a crash-safe external process.
+### 13. ModSecurity-compatible WAF agent (Coraza-based) — ✅ done
+`agents/coraza-waf/` — Go agent built on the SDK (#6) embedding
+[Coraza](https://coraza.io). Loads SecLang files or directories (OWASP CRS,
+Comodo, Imunify360 exports); refuses to start with no rules, a missing path, or
+an empty rule directory. Phases 1–5 map onto the v2 events, with phase 2
+evaluated at request-headers time whenever no body will arrive so ARGS rules
+always fire. Audit records are ModSecurity-native (`SecAuditLogFormat Native` +
+serial writer) for existing SIEM/fail2ban pipelines, and each decision carries
+matched rule IDs/tags back to the proxy. Bounded by construction: capped
+transaction table that never evicts in-flight work (explicit `--overflow
+allow|block`), TTL sweeper, body limits with `ProcessPartial`. `--mode
+detection` for false-positive tuning; block responses hide the rule ID unless
+`--expose-rule-id`. Verified by unit tests, a live-proxy test (SQLi gets 403,
+upstream never reached, block appears in the audit log), and
+`zentinel agent conform` — all three in CI.
+Not covered (deliberately): CRS is not vendored (operators point `--rules` at
+the copy they already run), and there is no per-tenant rule scoping yet — that
+wants #14's domain→account mapping.
 
 ### 14. Control-panel sync tool (cPanel/WHM first; Plesk, DirectAdmin later)
 Sidecar (not core) that watches panel account/domain state — e.g. cPanel's `/etc/userdatadomains` or WHM API — and regenerates per-domain routes + upstreams, then triggers the existing graceful reload. Domains added in the panel appear at the edge without manual config. Explicit failure mode: if generation fails validation, keep last-good config and alert — never partially apply.
