@@ -150,6 +150,7 @@ pub fn translate_ingresses(
                     let address = format!("{svc_name}.{ing_ns}.svc.cluster.local:{svc_port}");
 
                     let upstream = UpstreamConfig {
+                        profile: None,
                         id: upstream_id.clone(),
                         targets: vec![UpstreamTarget {
                             address,
@@ -221,6 +222,7 @@ pub fn translate_ingresses(
                 upstreams.insert(
                     upstream_id.clone(),
                     UpstreamConfig {
+                        profile: None,
                         id: upstream_id.clone(),
                         targets: vec![UpstreamTarget {
                             address,

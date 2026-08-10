@@ -146,8 +146,21 @@ rejection. Not covered here (deliberately): AutoSSL cert reuse at the edge
 (#18), LVE-aligned per-tenant limits (#15), live Apache+Imunify soak (needs
 licensed Imunify test box — manual verification steps in the doc).
 
-### 17. Named backend profiles for common stacks
-Explicit, opt-in KDL presets — `profile "apache-shared-hosting"`, `profile "litespeed"`, `profile "php-fpm-behind-apache"` — bundling tuned retry/keepalive/timeout values (e.g. tolerate Apache graceful-restart connection resets). Rendered into the config visibly by `zentinel explain`/`lint` so nothing is hidden; profiles are shorthand, not magic defaults.
+### 17. Named backend profiles for common stacks — ✅ done
+`profile "<name>"` on an upstream (`crates/config/src/profiles.rs`), shipping
+`apache-shared-hosting`, `litespeed`, and `php-fpm-behind-apache`. Resolution is
+per setting — explicit value > profile > built-in default — and what the profile
+contributed is recorded at parse time, so `zentinel explain` prints the full
+expansion (`Profile: "apache-shared-hosting" — contributed
+connection-pool.idle-timeout=3s, …`) instead of hiding it. `zentinel lint` flags
+an upstream that names a profile but overrides every setting it provides;
+unknown names are a hard config error listing the valid ones. The Apache
+profiles key on recycling pooled connections *before* the backend's
+`KeepAliveTimeout` expires, which is the actual fix for graceful-restart 502s.
+Used in `config/examples/imunify360-apache.kdl`.
+Not covered (deliberately): retries stay a route-level setting, so no profile
+touches them; profiles tune `timeouts` and `connection-pool` only, and set no
+TLS/HTTP-version/health-check values.
 
 ### 18. cPanel/WHM AutoSSL certificate integration
 Terminate TLS at Zentinel using the certs cPanel AutoSSL already issues, keeping the panel as certificate source-of-truth (users keep their SSL UI). Building blocks exist: `SniCertificate` (per-domain cert/key, SAN auto-extraction) + `CertificateReloader` hot reload — AutoSSL *renewals* rewrite files in place and are picked up without restart. Three gaps to close:

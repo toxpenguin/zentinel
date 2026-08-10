@@ -63,6 +63,14 @@ upstreams {
     // RemoteIPProxyProtocol is On (Apache would reject the bare TCP preface,
     // and without either, Imunify360 sees only 127.0.0.1).
     upstream "apache" {
+        // Shorthand for the pool/timeout values an Apache shared-hosting
+        // backend wants — notably an idle timeout below Apache's default
+        // KeepAliveTimeout, so the pool recycles connections before Apache
+        // closes them (the usual source of spurious 502s after a graceful
+        // restart). `zentinel explain` prints every value it contributes;
+        // anything set explicitly below wins over the profile.
+        profile "apache-shared-hosting"
+
         target "127.0.0.1:8080"
         load-balancing "round_robin"
         proxy-protocol "v2"

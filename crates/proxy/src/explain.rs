@@ -149,6 +149,11 @@ pub struct UpstreamInfo {
     pub target_count: Option<usize>,
     /// PROXY protocol version emitted on new connections (`v1`/`v2`), if any.
     pub proxy_protocol: Option<String>,
+    /// Backend profile named by the upstream, if any.
+    pub profile: Option<String>,
+    /// Settings the profile contributed, as `field=value` pairs. Empty when
+    /// the upstream overrode everything the profile offered.
+    pub profile_settings: Vec<String>,
 }
 
 /// A route that was evaluated but did not match.
@@ -278,6 +283,13 @@ fn build_report(config: &Config, request: &ExplainRequest, trace: &ExplainTrace)
                         }
                         .to_string()
                     }),
+                    profile: up.profile.as_ref().map(|p| p.name.clone()),
+                    profile_settings: up.profile.as_ref().map_or_else(Vec::new, |p| {
+                        p.settings
+                            .iter()
+                            .map(|s| format!("{}={}", s.field, s.value))
+                            .collect()
+                    }),
                 },
                 None => UpstreamInfo {
                     name: name.clone(),
@@ -285,6 +297,8 @@ fn build_report(config: &Config, request: &ExplainRequest, trace: &ExplainTrace)
                     load_balancing: None,
                     target_count: None,
                     proxy_protocol: None,
+                    profile: None,
+                    profile_settings: Vec::new(),
                 },
             });
 
@@ -435,6 +449,23 @@ impl ExplainReport {
                                  (backend sees real client IP; per-client connection pooling)"
                             );
                         }
+                        // Profiles are shorthand, so show what the shorthand
+                        // expanded to rather than just its name.
+                        if let Some(profile) = &u.profile {
+                            if u.profile_settings.is_empty() {
+                                let _ = writeln!(
+                                    out,
+                                    "  Profile: \"{profile}\" — contributed nothing \
+                                     (every setting is declared on the upstream)"
+                                );
+                            } else {
+                                let _ = writeln!(
+                                    out,
+                                    "  Profile: \"{profile}\" — contributed {}",
+                                    u.profile_settings.join(", ")
+                                );
+                            }
+                        }
                     }
                     Some(u) => {
                         let _ = writeln!(
@@ -557,6 +588,59 @@ mod tests {
         assert!(report
             .render_text()
             .contains("PROXY protocol: emits v2 header"));
+    }
+
+    #[test]
+    fn backend_profile_expansion_is_surfaced() {
+        let config = Config::from_kdl(
+            r#"
+            system { worker-threads 0 }
+            listeners {
+                listener "http" { address "0.0.0.0:8080" }
+            }
+            routes {
+                route "api" {
+                    matches { path-prefix "/" }
+                    upstream "backend"
+                }
+            }
+            upstreams {
+                upstream "backend" {
+                    target "127.0.0.1:9000"
+                    profile "apache-shared-hosting"
+                    timeouts { request 120 }
+                }
+            }
+            "#,
+        )
+        .unwrap();
+
+        let report = explain(&config, &req("GET", "/x", "example.com")).unwrap();
+        let upstream = report
+            .matched
+            .as_ref()
+            .expect("should match")
+            .upstream
+            .as_ref()
+            .expect("upstream resolved");
+
+        assert_eq!(upstream.profile.as_deref(), Some("apache-shared-hosting"));
+        // The overridden setting is not claimed by the profile; the rest are.
+        assert!(!upstream
+            .profile_settings
+            .iter()
+            .any(|s| s.starts_with("timeouts.request=")));
+        assert!(upstream
+            .profile_settings
+            .iter()
+            .any(|s| s == "timeouts.connect=5s"));
+
+        let text = report.render_text();
+        assert!(
+            text.contains("Profile: \"apache-shared-hosting\" — contributed"),
+            "profile expansion missing from explain output:\n{text}"
+        );
+        assert!(text.contains("connection-pool.idle-timeout=3s"), "{text}");
     }
 
     #[test]

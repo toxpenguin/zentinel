@@ -13,6 +13,8 @@ use zentinel_common::{
     CircuitBreakerConfig,
 };
 
+use crate::profiles::AppliedProfile;
+
 // ============================================================================
 // Sticky Session Configuration
 // ============================================================================
@@ -132,6 +134,15 @@ pub struct UpstreamConfig {
     /// same trade HAProxy's `send-proxy` makes.
     #[serde(default)]
     pub proxy_protocol: Option<ProxyProtocolVersion>,
+
+    /// Backend profile named by this upstream, plus the settings it actually
+    /// contributed (`None` when no `profile` was declared).
+    ///
+    /// Recorded at parse time so `explain`/`lint` can show what the shorthand
+    /// expanded to instead of re-deriving it. Explicit settings always win, so
+    /// an upstream that overrides everything records an empty settings list.
+    #[serde(default)]
+    pub profile: Option<AppliedProfile>,
 }
 
 /// PROXY protocol version to emit to an upstream.
@@ -272,7 +283,7 @@ impl Default for ConnectionPoolConfig {
 // ============================================================================
 
 /// Upstream timeouts
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UpstreamTimeouts {
     /// Connection timeout
     #[serde(default = "default_connect_timeout")]

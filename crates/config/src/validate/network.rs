@@ -55,6 +55,7 @@ mod tests {
         upstreams.insert(
             "test".to_string(),
             UpstreamConfig {
+                profile: None,
                 id: "test".to_string(),
                 targets: vec![UpstreamTarget {
                     address: "192.0.2.1:9999".to_string(), // TEST-NET-1 (unreachable)

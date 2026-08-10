@@ -392,6 +392,7 @@ mod tests {
 
     fn create_test_config() -> UpstreamConfig {
         UpstreamConfig {
+            profile: None,
             id: "test-upstream".to_string(),
             targets: vec![UpstreamTarget {
                 address: "127.0.0.1:8081".to_string(),

@@ -852,6 +852,7 @@ impl ConfigTranslator {
         };
 
         let upstream = UpstreamConfig {
+            profile: None,
             id: upstream_id.clone(),
             targets,
             load_balancing,
@@ -1268,6 +1269,7 @@ impl ConfigTranslator {
         }
 
         let upstream = UpstreamConfig {
+            profile: None,
             id: upstream_id.clone(),
             targets,
             load_balancing: LoadBalancingAlgorithm::RoundRobin,
@@ -1424,6 +1426,7 @@ impl ConfigTranslator {
         }
 
         let upstream = UpstreamConfig {
+            profile: None,
             id: upstream_id.clone(),
             targets,
             load_balancing: LoadBalancingAlgorithm::RoundRobin,

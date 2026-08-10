@@ -532,6 +532,7 @@ mod tests {
         upstreams.insert(
             "backend".to_string(),
             UpstreamConfig {
+                profile: None,
                 id: "backend".to_string(),
                 targets: vec![
                     UpstreamTarget {

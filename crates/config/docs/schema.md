@@ -310,6 +310,46 @@ Backend server pool configuration.
 | `tls` | `UpstreamTlsConfig` | - | TLS configuration |
 | `http-version` | `HttpVersionConfig` | `{}` | HTTP version settings |
 | `proxy-protocol` | `string` | - | Emit a PROXY header on new connections: `v1` or `v2`. The backend sees the real client address. Costs cross-client connection reuse (pooled connections are keyed per client identity) |
+| `profile` | `string` | - | Backend profile supplying pool/timeout values for a known stack (see below) |
+
+### Backend profiles
+
+A profile is shorthand for the `timeouts` and `connection-pool` values a known
+backend stack wants. Profiles are opt-in, never implicit: an upstream without a
+`profile` line behaves exactly as it always has.
+
+```kdl
+upstream "apache" {
+    profile "apache-shared-hosting"
+    target "127.0.0.1:8080"
+    timeouts { request 120 }   // explicit settings always win
+}
+```
+
+Resolution is per setting: an explicitly declared value wins, otherwise the
+profile supplies it, otherwise the built-in default applies. Whatever the
+profile contributed is recorded in the parsed config and printed by
+`zentinel explain`:
+
+```
+Profile: "apache-shared-hosting" — contributed connection-pool.idle-timeout=3s,
+  connection-pool.max-lifetime=30s, timeouts.connect=5s, timeouts.read=60s, ...
+```
+
+`zentinel lint` warns when an upstream names a profile but overrides every
+setting it provides — the profile line is then decorative and misleading. An
+unknown profile name is a hard config error listing the valid names.
+
+| Profile | Backend | Highlights |
+|---------|---------|------------|
+| `apache-shared-hosting` | Apache httpd on a shared-hosting box | idle-timeout 3s (under Apache's default `KeepAliveTimeout 5`), max-lifetime 30s, 64 connections/target |
+| `litespeed` | LiteSpeed / OpenLiteSpeed | wider pool (256/target), 120s request timeout |
+| `php-fpm-behind-apache` | Apache in front of PHP-FPM | 300s request/read timeouts, narrow pool (32/target) to shed load at the edge rather than in FPM |
+
+Profiles cover upstream tuning only. Retries are a **route** setting
+(`retry-policy`), so no profile changes them. Each profile documents the
+backend defaults it assumes — check them against your own server config; the
+values live in `crates/config/src/profiles.rs`.
 
 ### UpstreamTarget
 

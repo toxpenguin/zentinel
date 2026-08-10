@@ -7,6 +7,7 @@ use tracing::trace;
 
 use zentinel_common::types::{HealthCheckType, LoadBalancingAlgorithm};
 
+use crate::profiles::{AppliedProfile, BackendProfile, ProfileSetting};
 use crate::{kdl::circuitbreaker_helper::parse_circuit_breaker_faildefault, upstreams::*};
 
 use super::helpers::{
@@ -100,23 +101,41 @@ pub fn parse_upstream(child: &kdl::KdlNode) -> Result<UpstreamConfig> {
             );
         }
 
-        // Parse connection pool configuration
-        let connection_pool = child
-            .children()
-            .and_then(|c| {
-                c.nodes()
-                    .iter()
-                    .find(|n| n.name().value() == "connection-pool")
+        // Resolve the backend profile (if any) before pool/timeout parsing:
+        // it supplies the baseline those blocks are merged over.
+        let profile = get_string_entry(child, "profile")
+            .map(|name| {
+                BackendProfile::find(&name).ok_or_else(|| {
+                    anyhow!(
+                        "Unknown backend profile '{}' for upstream '{}'. Valid profiles: {}",
+                        name,
+                        id,
+                        BackendProfile::names().join(", ")
+                    )
+                })
             })
-            .map(parse_connection_pool)
-            .unwrap_or_default();
+            .transpose()?;
+
+        let mut contributed: Vec<ProfileSetting> = Vec::new();
+
+        // Parse connection pool configuration
+        let pool_node = child.children().and_then(|c| {
+            c.nodes()
+                .iter()
+                .find(|n| n.name().value() == "connection-pool")
+        });
+        let connection_pool = parse_connection_pool(pool_node, profile, &mut contributed);
 
         // Parse timeouts configuration
-        let timeouts = child
+        let timeouts_node = child
             .children()
-            .and_then(|c| c.nodes().iter().find(|n| n.name().value() == "timeouts"))
-            .map(parse_upstream_timeouts)
-            .unwrap_or_default();
+            .and_then(|c| c.nodes().iter().find(|n| n.name().value() == "timeouts"));
+        let timeouts = parse_upstream_timeouts(timeouts_node, profile, &mut contributed);
+
+        let profile = profile.map(|p| AppliedProfile {
+            name: p.name.to_string(),
+            settings: contributed,
+        });
 
         // Parse TLS configuration
         let tls = child
@@ -178,6 +197,7 @@ pub fn parse_upstream(child: &kdl::KdlNode) -> Result<UpstreamConfig> {
             tls,
             http_version,
             proxy_protocol,
+            profile,
         })
     } else {
         Err(anyhow!("Child is not upstream stanza"))
@@ -361,7 +381,10 @@ fn parse_http_version(node: &kdl::KdlNode) -> HttpVersionConfig {
     }
 }
 
-/// Parse connection pool configuration
+/// Parse connection pool configuration, merged over `profile`'s values.
+///
+/// Each setting is taken from the KDL node when present, otherwise from the
+/// profile (recorded in `contributed`), otherwise from the built-in default.
 ///
 /// Example KDL:
 /// ```kdl
@@ -372,26 +395,100 @@ fn parse_http_version(node: &kdl::KdlNode) -> HttpVersionConfig {
 ///     max-lifetime 3600
 /// }
 /// ```
-fn parse_connection_pool(node: &kdl::KdlNode) -> ConnectionPoolConfig {
-    let max_connections = get_int_entry(node, "max-connections")
-        .map(|v| v as usize)
-        .unwrap_or(100);
+fn parse_connection_pool(
+    node: Option<&kdl::KdlNode>,
+    profile: Option<&'static BackendProfile>,
+    contributed: &mut Vec<ProfileSetting>,
+) -> ConnectionPoolConfig {
+    let base = profile.map_or_else(
+        ConnectionPoolConfig::default,
+        BackendProfile::connection_pool,
+    );
 
-    let max_idle = get_int_entry(node, "max-idle")
-        .map(|v| v as usize)
-        .unwrap_or(20);
+    let max_connections = merge(
+        node.and_then(|n| get_int_entry(n, "max-connections"))
+            .map(|v| v as usize),
+        base.max_connections,
+        profile.is_some(),
+        "connection-pool.max-connections",
+        contributed,
+    );
+    let max_idle = merge(
+        node.and_then(|n| get_int_entry(n, "max-idle"))
+            .map(|v| v as usize),
+        base.max_idle,
+        profile.is_some(),
+        "connection-pool.max-idle",
+        contributed,
+    );
+    let idle_timeout_secs = merge_secs(
+        node.and_then(|n| get_int_entry(n, "idle-timeout"))
+            .map(|v| v as u64),
+        base.idle_timeout_secs,
+        profile.is_some(),
+        "connection-pool.idle-timeout",
+        contributed,
+    );
 
-    let idle_timeout_secs = get_int_entry(node, "idle-timeout")
-        .map(|v| v as u64)
-        .unwrap_or(60);
-
-    let max_lifetime_secs = get_int_entry(node, "max-lifetime").map(|v| v as u64);
+    // max-lifetime is optional everywhere: an explicit value wins, otherwise
+    // the profile's (which may itself be "unset").
+    let max_lifetime_secs = match node.and_then(|n| get_int_entry(n, "max-lifetime")) {
+        Some(v) => Some(v as u64),
+        None => {
+            if let (true, Some(secs)) = (profile.is_some(), base.max_lifetime_secs) {
+                contributed.push(ProfileSetting::new(
+                    "connection-pool.max-lifetime",
+                    format!("{secs}s"),
+                ));
+            }
+            base.max_lifetime_secs
+        }
+    };
 
     ConnectionPoolConfig {
         max_connections,
         max_idle,
         idle_timeout_secs,
         max_lifetime_secs,
+    }
+}
+
+/// Take `explicit` when set; otherwise fall back to `base`, recording it as a
+/// profile contribution when a profile supplied it.
+fn merge<T: std::fmt::Display>(
+    explicit: Option<T>,
+    base: T,
+    from_profile: bool,
+    field: &str,
+    contributed: &mut Vec<ProfileSetting>,
+) -> T {
+    match explicit {
+        Some(value) => value,
+        None => {
+            if from_profile {
+                contributed.push(ProfileSetting::new(field, &base));
+            }
+            base
+        }
+    }
+}
+
+/// [`merge`] for second-valued settings, rendered as `5s` rather than `5`.
+fn merge_secs(
+    explicit: Option<u64>,
+    base: u64,
+    from_profile: bool,
+    field: &str,
+    contributed: &mut Vec<ProfileSetting>,
+) -> u64 {
+    match explicit {
+        Some(value) => value,
+        None => {
+            if from_profile {
+                contributed.push(ProfileSetting::new(field, format!("{base}s")));
+            }
+            base
+        }
     }
 }
 
@@ -406,24 +503,46 @@ fn parse_connection_pool(node: &kdl::KdlNode) -> ConnectionPoolConfig {
 ///     write 30
 /// }
 /// ```
-fn parse_upstream_timeouts(node: &kdl::KdlNode) -> UpstreamTimeouts {
-    let connect_secs = get_int_entry(node, "connect")
-        .map(|v| v as u64)
-        .unwrap_or(10);
-
-    let request_secs = get_int_entry(node, "request")
-        .map(|v| v as u64)
-        .unwrap_or(60);
-
-    let read_secs = get_int_entry(node, "read").map(|v| v as u64).unwrap_or(30);
-
-    let write_secs = get_int_entry(node, "write").map(|v| v as u64).unwrap_or(30);
+fn parse_upstream_timeouts(
+    node: Option<&kdl::KdlNode>,
+    profile: Option<&'static BackendProfile>,
+    contributed: &mut Vec<ProfileSetting>,
+) -> UpstreamTimeouts {
+    let base = profile.map_or_else(UpstreamTimeouts::default, BackendProfile::timeouts);
 
     UpstreamTimeouts {
-        connect_secs,
-        request_secs,
-        read_secs,
-        write_secs,
+        connect_secs: merge_secs(
+            node.and_then(|n| get_int_entry(n, "connect"))
+                .map(|v| v as u64),
+            base.connect_secs,
+            profile.is_some(),
+            "timeouts.connect",
+            contributed,
+        ),
+        request_secs: merge_secs(
+            node.and_then(|n| get_int_entry(n, "request"))
+                .map(|v| v as u64),
+            base.request_secs,
+            profile.is_some(),
+            "timeouts.request",
+            contributed,
+        ),
+        read_secs: merge_secs(
+            node.and_then(|n| get_int_entry(n, "read"))
+                .map(|v| v as u64),
+            base.read_secs,
+            profile.is_some(),
+            "timeouts.read",
+            contributed,
+        ),
+        write_secs: merge_secs(
+            node.and_then(|n| get_int_entry(n, "write"))
+                .map(|v| v as u64),
+            base.write_secs,
+            profile.is_some(),
+            "timeouts.write",
+            contributed,
+        ),
     }
 }
 
@@ -743,6 +862,158 @@ mod tests {
             .unwrap()
             .targets
             .clone()
+    }
+
+    fn upstream_of(kdl: &str, id: &str) -> UpstreamConfig {
+        parse_kdl_upstreams(kdl).unwrap().get(id).unwrap().clone()
+    }
+
+    #[test]
+    fn profile_fills_settings_the_upstream_did_not_declare() {
+        let up = upstream_of(
+            r#"
+            upstreams {
+                upstream "apache" {
+                    profile "apache-shared-hosting"
+                    target "127.0.0.1:8080"
+                }
+            }
+            "#,
+            "apache",
+        );
+
+        let profile = BackendProfile::find("apache-shared-hosting").unwrap();
+        assert_eq!(up.timeouts.connect_secs, profile.connect_secs);
+        assert_eq!(up.connection_pool.max_connections, profile.max_connections);
+        assert_eq!(
+            up.connection_pool.idle_timeout_secs,
+            profile.idle_timeout_secs
+        );
+        assert_eq!(
+            up.connection_pool.max_lifetime_secs,
+            profile.max_lifetime_secs
+        );
+
+        // Everything it supplied is on the record, not inferred later.
+        let applied = up.profile.expect("profile recorded on the upstream");
+        assert_eq!(applied.name, "apache-shared-hosting");
+        assert!(applied
+            .settings
+            .iter()
+            .any(|s| s.field == "timeouts.connect" && s.value == "5s"));
+        assert!(applied
+            .settings
+            .iter()
+            .any(|s| s.field == "connection-pool.max-connections"));
+    }
+
+    #[test]
+    fn explicit_settings_beat_the_profile_field_by_field() {
+        let up = upstream_of(
+            r#"
+            upstreams {
+                upstream "apache" {
+                    profile "apache-shared-hosting"
+                    target "127.0.0.1:8080"
+                    timeouts { request 120 }
+                }
+            }
+            "#,
+            "apache",
+        );
+
+        let profile = BackendProfile::find("apache-shared-hosting").unwrap();
+        assert_eq!(up.timeouts.request_secs, 120, "explicit value must win");
+        assert_eq!(
+            up.timeouts.connect_secs, profile.connect_secs,
+            "untouched fields still come from the profile"
+        );
+
+        let applied = up.profile.unwrap();
+        assert!(
+            !applied
+                .settings
+                .iter()
+                .any(|s| s.field == "timeouts.request"),
+            "an overridden setting must not be reported as a profile contribution"
+        );
+        assert!(applied.settings.iter().any(|s| s.field == "timeouts.read"));
+    }
+
+    #[test]
+    fn profile_overridden_everywhere_records_no_contributions() {
+        let up = upstream_of(
+            r#"
+            upstreams {
+                upstream "apache" {
+                    profile "apache-shared-hosting"
+                    target "127.0.0.1:8080"
+                    timeouts { connect 1; request 2; read 3; write 4 }
+                    connection-pool { max-connections 5; max-idle 6; idle-timeout 7; max-lifetime 8 }
+                }
+            }
+            "#,
+            "apache",
+        );
+
+        assert_eq!(up.timeouts.connect_secs, 1);
+        assert_eq!(up.connection_pool.max_lifetime_secs, Some(8));
+        let applied = up.profile.unwrap();
+        assert!(
+            applied.settings.is_empty(),
+            "decorative profile must record an empty contribution list, got {:?}",
+            applied.settings
+        );
+    }
+
+    #[test]
+    fn upstream_without_a_profile_keeps_the_built_in_defaults() {
+        let up = upstream_of(
+            r#"upstreams { upstream "b" { target "127.0.0.1:8081" } }"#,
+            "b",
+        );
+
+        assert!(up.profile.is_none());
+        assert_eq!(up.timeouts, UpstreamTimeouts::default());
+        assert_eq!(
+            up.connection_pool.max_connections,
+            ConnectionPoolConfig::default().max_connections
+        );
+    }
+
+    #[test]
+    fn unknown_profile_is_rejected_with_the_valid_names() {
+        let err = parse_kdl_upstreams(
+            r#"
+            upstreams {
+                upstream "b" {
+                    profile "apache-shared-hostings"
+                    target "127.0.0.1:8081"
+                }
+            }
+            "#,
+        )
+        .unwrap_err()
+        .to_string();
+
+        assert!(err.contains("Unknown backend profile"), "got: {err}");
+        assert!(err.contains("apache-shared-hosting"), "got: {err}");
+    }
+
+    #[test]
+    fn every_shipped_profile_parses() {
+        for name in BackendProfile::names() {
+            let kdl = format!(
+                r#"upstreams {{ upstream "b" {{ profile "{name}"; target "127.0.0.1:8081" }} }}"#
+            );
+            let up = upstream_of(&kdl, "b");
+            let applied = up.profile.unwrap_or_else(|| panic!("{name} not applied"));
+            assert_eq!(applied.name, name);
+            assert!(
+                !applied.settings.is_empty(),
+                "profile '{name}' contributed nothing to a bare upstream"
+            );
+        }
     }
 
     #[test]

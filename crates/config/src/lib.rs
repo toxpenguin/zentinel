@@ -47,6 +47,7 @@ mod kdl;
 pub mod multi_file;
 pub mod namespace;
 pub mod observability;
+pub mod profiles;
 pub mod resolution;
 pub mod routes;
 pub mod server;
@@ -116,6 +117,9 @@ pub use zentinel_common::TraceIdFormat;
 pub use zentinel_common::budget::{
     BudgetPeriod, CostAttributionConfig, ModelPricing, TokenBudgetConfig,
 };
+
+// Backend profiles
+pub use profiles::{AppliedProfile, BackendProfile, ProfileSetting, PROFILES};
 
 // Upstreams
 pub use upstreams::{
@@ -791,6 +795,7 @@ impl Config {
         upstreams.insert(
             "default".to_string(),
             UpstreamConfig {
+                profile: None,
                 id: "default".to_string(),
                 targets: vec![UpstreamTarget {
                     address: "127.0.0.1:8081".to_string(),

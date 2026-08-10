@@ -59,6 +59,18 @@ pub fn lint_config(config: &Config) -> ValidationResult {
                 name
             )));
         }
+
+        // A profile whose every setting is overridden reads as if the backend
+        // tuning came from the profile when none of it did.
+        if let Some(profile) = &upstream.profile {
+            if profile.settings.is_empty() {
+                result.add_warning(ValidationWarning::new(format!(
+                    "Upstream '{}' declares profile '{}' but overrides every setting it provides \
+                     (the profile line is decorative — drop it, or drop the overrides)",
+                    name, profile.name
+                )));
+            }
+        }
     }
 
     // Check listeners for security best practices
@@ -536,6 +548,7 @@ mod tests {
 
     fn test_upstream_config() -> UpstreamConfig {
         UpstreamConfig {
+            profile: None,
             id: "test".to_string(),
             targets: vec![UpstreamTarget {
                 address: "127.0.0.1:8080".to_string(),
@@ -615,6 +628,45 @@ mod tests {
             .warnings
             .iter()
             .any(|w| w.message.contains("can spoof its address")));
+    }
+
+    #[test]
+    fn lint_warns_on_a_profile_that_contributes_nothing() {
+        let mut config = Config::default_for_testing();
+        let mut upstream = test_upstream_config();
+        upstream.profile = Some(crate::profiles::AppliedProfile {
+            name: "apache-shared-hosting".to_string(),
+            settings: vec![],
+        });
+        config.upstreams = HashMap::from([("test".to_string(), upstream)]);
+
+        let result = lint_config(&config);
+
+        assert!(result
+            .warnings
+            .iter()
+            .any(|w| w.message.contains("decorative")));
+    }
+
+    #[test]
+    fn lint_accepts_a_profile_that_contributes_settings() {
+        let mut config = Config::default_for_testing();
+        let mut upstream = test_upstream_config();
+        upstream.profile = Some(crate::profiles::AppliedProfile {
+            name: "apache-shared-hosting".to_string(),
+            settings: vec![crate::profiles::ProfileSetting {
+                field: "timeouts.connect".to_string(),
+                value: "5s".to_string(),
+            }],
+        });
+        config.upstreams = HashMap::from([("test".to_string(), upstream)]);
+
+        let result = lint_config(&config);
+
+        assert!(!result
+            .warnings
+            .iter()
+            .any(|w| w.message.contains("decorative")));
     }
 
     #[test]

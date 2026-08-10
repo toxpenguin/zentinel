@@ -1262,6 +1262,7 @@ mod tests {
 
     fn test_upstream(id: &str) -> UpstreamConfig {
         UpstreamConfig {
+            profile: None,
             id: id.to_string(),
             targets: vec![UpstreamTarget {
                 address: "127.0.0.1:8080".to_string(),
@@ -2007,6 +2008,7 @@ mod tests {
 
         // --- UpstreamConfig ---
         let _upstream = UpstreamConfig {
+            profile: None,
             id: "default".to_string(),
             targets: vec![UpstreamTarget {
                 address: "127.0.0.1:8081".to_string(),
