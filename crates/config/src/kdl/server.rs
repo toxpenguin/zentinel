@@ -12,7 +12,8 @@ use crate::server::{
     default_proxy_protocol_header_timeout_ms, default_renewal_days, default_request_timeout,
     default_worker_threads, AcmeChallengeType, AcmeConfig, AcmeKeyType, DnsProviderConfig,
     DnsProviderType, ExternalAccountBinding, ListenerConfig, ListenerProtocol,
-    PropagationCheckConfig, ProxyProtocolConfig, ServerConfig, SniCertificate, TlsConfig,
+    PropagationCheckConfig, ProxyProtocolConfig, ServerConfig, SniCertDir, SniCertificate,
+    TlsConfig,
 };
 
 use super::helpers::{get_bool_entry, get_first_arg_string, get_int_entry, get_string_entry};
@@ -268,14 +269,26 @@ pub fn parse_tls_config(node: &kdl::KdlNode, listener_id: &str) -> Result<TlsCon
         None
     };
 
-    // cert-file and key-file are required unless ACME is configured
+    // cert-file and key-file are required unless ACME or a combined PEM is
+    // configured.
     let cert_file = get_string_entry(node, "cert-file").map(PathBuf::from);
     let key_file = get_string_entry(node, "key-file").map(PathBuf::from);
+    let combined_file = get_string_entry(node, "combined-file").map(PathBuf::from);
+
+    if combined_file.is_some() && (cert_file.is_some() || key_file.is_some()) {
+        return Err(anyhow::anyhow!(
+            "TLS configuration for listener '{}' sets 'combined-file' together with \
+             'cert-file'/'key-file'. A combined PEM already carries the certificate, \
+             its chain, and the key — use one form or the other",
+            listener_id
+        ));
+    }
 
     // Validate that either manual certs or ACME is configured
-    if acme.is_none() && (cert_file.is_none() || key_file.is_none()) {
+    if acme.is_none() && combined_file.is_none() && (cert_file.is_none() || key_file.is_none()) {
         return Err(anyhow::anyhow!(
-            "TLS configuration for listener '{}' requires either 'cert-file' and 'key-file', or an 'acme' block",
+            "TLS configuration for listener '{}' requires either 'cert-file' and 'key-file', \
+             a 'combined-file', or an 'acme' block",
             listener_id
         ));
     }
@@ -321,20 +334,36 @@ pub fn parse_tls_config(node: &kdl::KdlNode, listener_id: &str) -> Result<TlsCon
         Vec::new()
     };
 
+    // Parse certificate directories (one subdirectory per domain)
+    let sni_cert_dirs = if let Some(children) = node.children() {
+        children
+            .nodes()
+            .iter()
+            .filter(|n| n.name().value() == "sni-cert-dir")
+            .map(|dir_node| parse_sni_cert_dir(dir_node, listener_id))
+            .collect::<Result<Vec<_>>>()?
+    } else {
+        Vec::new()
+    };
+
     debug!(
         listener_id = %listener_id,
         has_cert_file = cert_file.is_some(),
+        has_combined_file = combined_file.is_some(),
         has_acme = acme.is_some(),
         has_ca = ca_file.is_some(),
         client_auth = client_auth,
         sni_cert_count = additional_certs.len(),
+        sni_cert_dir_count = sni_cert_dirs.len(),
         "Parsed TLS configuration"
     );
 
     Ok(TlsConfig {
         cert_file,
         key_file,
+        combined_file,
         additional_certs,
+        sni_cert_dirs,
         ca_file,
         min_version,
         max_version,
@@ -739,22 +768,42 @@ fn parse_sni_certificate(node: &kdl::KdlNode, listener_id: &str) -> Result<SniCe
 
     let cert_file = get_string_entry(node, "cert-file").map(PathBuf::from);
     let key_file = get_string_entry(node, "key-file").map(PathBuf::from);
+    let combined_file = get_string_entry(node, "combined-file").map(PathBuf::from);
 
-    // Validate mutual exclusion and completeness
-    match (&acme, &cert_file, &key_file) {
-        (Some(_), Some(_), _) | (Some(_), _, Some(_)) => {
-            return Err(anyhow::anyhow!(
-                "SNI certificate for listener '{}' cannot specify both manual files and an 'acme' block",
-                listener_id
-            ));
+    // Exactly one certificate source: split files, a combined PEM, or ACME.
+    if combined_file.is_some() && (cert_file.is_some() || key_file.is_some()) {
+        return Err(anyhow::anyhow!(
+            "SNI certificate for listener '{}' sets 'combined-file' together with \
+             'cert-file'/'key-file'. A combined PEM already carries the certificate, \
+             its chain, and the key — use one form or the other",
+            listener_id
+        ));
+    }
+    if combined_file.is_some() && acme.is_some() {
+        return Err(anyhow::anyhow!(
+            "SNI certificate for listener '{}' cannot specify both 'combined-file' and an 'acme' block",
+            listener_id
+        ));
+    }
+
+    if combined_file.is_none() {
+        // Validate mutual exclusion and completeness
+        match (&acme, &cert_file, &key_file) {
+            (Some(_), Some(_), _) | (Some(_), _, Some(_)) => {
+                return Err(anyhow::anyhow!(
+                    "SNI certificate for listener '{}' cannot specify both manual files and an 'acme' block",
+                    listener_id
+                ));
+            }
+            (None, None, _) | (None, _, None) => {
+                return Err(anyhow::anyhow!(
+                    "SNI certificate for listener '{}' requires both 'cert-file' and 'key-file', \
+                     a 'combined-file', or an 'acme' block",
+                    listener_id
+                ));
+            }
+            _ => {} // Valid: either acme OR (cert_file AND key_file)
         }
-        (None, None, _) | (None, _, None) => {
-            return Err(anyhow::anyhow!(
-                "SNI certificate for listener '{}' requires either both 'cert-file' and 'key-file', or an 'acme' block",
-                listener_id
-            ));
-        }
-        _ => {} // Valid: either acme OR (cert_file AND key_file)
     }
 
     if let Some(ref acme_config) = acme {
@@ -764,7 +813,12 @@ fn parse_sni_certificate(node: &kdl::KdlNode, listener_id: &str) -> Result<SniCe
             "Parsed SNI certificate with ACME"
         );
     } else {
-        let cert_path = cert_file.as_ref().unwrap().display();
+        // One of the two is always set here (validated above).
+        let cert_path = cert_file
+            .as_ref()
+            .or(combined_file.as_ref())
+            .expect("a certificate source is present")
+            .display();
         if !priority_hostnames.is_empty() {
             debug!(
                 listener_id = %listener_id,
@@ -793,7 +847,59 @@ fn parse_sni_certificate(node: &kdl::KdlNode, listener_id: &str) -> Result<SniCe
         priority_hostnames,
         cert_file,
         key_file,
+        combined_file,
         acme,
+    })
+}
+
+/// Parse a certificate-directory block.
+///
+/// Example KDL (cPanel AutoSSL layout — the default file name):
+/// ```kdl
+/// sni-cert-dir "/var/cpanel/ssl/apache_tls"
+///
+/// // Split layout, one subdirectory per domain:
+/// sni-cert-dir "/etc/panel/certs" {
+///     cert-file "fullchain.pem"
+///     key-file "privkey.pem"
+/// }
+/// ```
+fn parse_sni_cert_dir(node: &kdl::KdlNode, listener_id: &str) -> Result<SniCertDir> {
+    let path = get_first_arg_string(node).ok_or_else(|| {
+        anyhow::anyhow!(
+            "sni-cert-dir for listener '{}' requires a directory path, e.g. \
+             sni-cert-dir \"/var/cpanel/ssl/apache_tls\"",
+            listener_id
+        )
+    })?;
+
+    let cert_name = get_string_entry(node, "cert-file");
+    let key_name = get_string_entry(node, "key-file");
+    if cert_name.is_some() != key_name.is_some() {
+        return Err(anyhow::anyhow!(
+            "sni-cert-dir '{}' for listener '{}' sets only one of 'cert-file'/'key-file'. \
+             Split layouts need both; omit both to use the combined-PEM layout",
+            path,
+            listener_id
+        ));
+    }
+
+    let combined_name =
+        get_string_entry(node, "combined-file").unwrap_or_else(|| "combined".to_string());
+
+    debug!(
+        listener_id = %listener_id,
+        path = %path,
+        combined_name = %combined_name,
+        split_layout = cert_name.is_some(),
+        "Parsed SNI certificate directory"
+    );
+
+    Ok(SniCertDir {
+        path: PathBuf::from(path),
+        combined_name,
+        cert_name,
+        key_name,
     })
 }
 
@@ -846,6 +952,189 @@ mod tests {
         let doc: kdl::KdlDocument = input.parse().unwrap();
         let node = doc.nodes().first().unwrap();
         parse_listeners(node)
+    }
+
+    fn tls_of(input: &str) -> TlsConfig {
+        parse(input)
+            .into_iter()
+            .next()
+            .unwrap()
+            .tls
+            .expect("listener has TLS")
+    }
+
+    #[test]
+    fn parses_combined_pem_certificate() {
+        let tls = tls_of(
+            r#"
+            listeners {
+                listener "https" {
+                    address "0.0.0.0:443"
+                    tls {
+                        combined-file "/var/cpanel/ssl/apache_tls/example.com/combined"
+                    }
+                }
+            }
+            "#,
+        );
+
+        assert_eq!(
+            tls.combined_file,
+            Some(PathBuf::from(
+                "/var/cpanel/ssl/apache_tls/example.com/combined"
+            ))
+        );
+        assert!(tls.cert_file.is_none() && tls.key_file.is_none());
+    }
+
+    #[test]
+    fn rejects_combined_file_alongside_split_files() {
+        let err = parse_result(
+            r#"
+            listeners {
+                listener "https" {
+                    address "0.0.0.0:443"
+                    tls {
+                        cert-file "/etc/zentinel/edge.crt"
+                        key-file "/etc/zentinel/edge.key"
+                        combined-file "/var/cpanel/ssl/apache_tls/example.com/combined"
+                    }
+                }
+            }
+            "#,
+        )
+        .unwrap_err()
+        .to_string();
+
+        assert!(err.contains("combined-file"), "got: {err}");
+    }
+
+    #[test]
+    fn parses_sni_cert_dir_with_panel_defaults() {
+        let tls = tls_of(
+            r#"
+            listeners {
+                listener "https" {
+                    address "0.0.0.0:443"
+                    tls {
+                        cert-file "/etc/zentinel/edge.crt"
+                        key-file "/etc/zentinel/edge.key"
+                        sni-cert-dir "/var/cpanel/ssl/apache_tls"
+                    }
+                }
+            }
+            "#,
+        );
+
+        assert_eq!(tls.sni_cert_dirs.len(), 1);
+        let dir = &tls.sni_cert_dirs[0];
+        assert_eq!(dir.path, PathBuf::from("/var/cpanel/ssl/apache_tls"));
+        assert_eq!(dir.combined_name, "combined");
+        assert!(dir.cert_name.is_none() && dir.key_name.is_none());
+    }
+
+    #[test]
+    fn parses_sni_cert_dir_with_split_layout() {
+        let tls = tls_of(
+            r#"
+            listeners {
+                listener "https" {
+                    address "0.0.0.0:443"
+                    tls {
+                        cert-file "/etc/zentinel/edge.crt"
+                        key-file "/etc/zentinel/edge.key"
+                        sni-cert-dir "/etc/panel/certs" {
+                            cert-file "fullchain.pem"
+                            key-file "privkey.pem"
+                        }
+                    }
+                }
+            }
+            "#,
+        );
+
+        let dir = &tls.sni_cert_dirs[0];
+        assert_eq!(dir.cert_name.as_deref(), Some("fullchain.pem"));
+        assert_eq!(dir.key_name.as_deref(), Some("privkey.pem"));
+    }
+
+    #[test]
+    fn rejects_half_specified_split_cert_dir() {
+        let err = parse_result(
+            r#"
+            listeners {
+                listener "https" {
+                    address "0.0.0.0:443"
+                    tls {
+                        cert-file "/etc/zentinel/edge.crt"
+                        key-file "/etc/zentinel/edge.key"
+                        sni-cert-dir "/etc/panel/certs" {
+                            cert-file "fullchain.pem"
+                        }
+                    }
+                }
+            }
+            "#,
+        )
+        .unwrap_err()
+        .to_string();
+
+        assert!(err.contains("only one of"), "got: {err}");
+    }
+
+    #[test]
+    fn parses_sni_certificate_from_combined_pem() {
+        let tls = tls_of(
+            r#"
+            listeners {
+                listener "https" {
+                    address "0.0.0.0:443"
+                    tls {
+                        cert-file "/etc/zentinel/edge.crt"
+                        key-file "/etc/zentinel/edge.key"
+                        sni {
+                            combined-file "/var/cpanel/ssl/apache_tls/shop.example.com/combined"
+                        }
+                    }
+                }
+            }
+            "#,
+        );
+
+        let sni = &tls.additional_certs[0];
+        assert!(sni.combined_file.is_some());
+        assert!(sni.cert_file.is_none());
+        // No hostnames listed: they come from the certificate's CN/SAN, which
+        // is what lets the panel add domains without a config edit.
+        assert!(sni.hostnames.is_empty());
+    }
+
+    #[test]
+    fn rejects_sni_certificate_with_combined_and_acme() {
+        let err = parse_result(
+            r#"
+            listeners {
+                listener "https" {
+                    address "0.0.0.0:443"
+                    tls {
+                        cert-file "/etc/zentinel/edge.crt"
+                        key-file "/etc/zentinel/edge.key"
+                        sni {
+                            combined-file "/var/cpanel/ssl/apache_tls/shop.example.com/combined"
+                            acme {
+                                email "admin@example.com"
+                                domains "shop.example.com"
+                            }
+                        }
+                    }
+                }
+            }
+            "#,
+        )
+        .unwrap_err()
+        .to_string();
+
+        assert!(err.contains("combined-file"), "got: {err}");
     }
 
     #[test]

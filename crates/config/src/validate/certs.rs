@@ -61,28 +61,59 @@ pub async fn validate_certificates(config: &Config) -> ValidationResult {
                 continue;
             }
 
-            // Manual certificate validation
-            let cert_file = match &tls.cert_file {
-                Some(path) => path,
-                None => {
+            // Panel-managed certificate directories: the path itself is what
+            // has to be right — a typo here looks identical to "no domains
+            // issued yet" until a TLS handshake fails.
+            for dir in &tls.sni_cert_dirs {
+                match std::fs::read_dir(&dir.path) {
+                    Ok(entries) => {
+                        let domains = entries
+                            .filter_map(std::result::Result::ok)
+                            .filter(|e| e.path().is_dir())
+                            .filter(|e| dir.paths_for(&e.path()).is_some())
+                            .count();
+                        if domains == 0 {
+                            result.add_warning(ValidationWarning::new(format!(
+                                "Certificate directory {:?} for listener '{}' holds no usable \
+                                 certificates (expected <domain>/{} per domain)",
+                                dir.path, listener.id, dir.combined_name
+                            )));
+                        }
+                    }
+                    Err(e) => {
+                        result.add_error(ValidationError::new(
+                            ErrorCategory::Certificate,
+                            format!(
+                                "Certificate directory {:?} for listener '{}' is unreadable: {}",
+                                dir.path, listener.id, e
+                            ),
+                        ));
+                    }
+                }
+            }
+
+            // Manual certificate validation. A combined PEM carries the chain
+            // and the key in one file, so both checks point at it.
+            let (cert_file, key_file) = match (&tls.cert_file, &tls.key_file, &tls.combined_file) {
+                (_, _, Some(combined)) => (combined, combined),
+                (Some(cert), Some(key), None) => (cert, key),
+                (None, _, None) => {
                     result.add_error(ValidationError::new(
                         ErrorCategory::Certificate,
                         format!(
-                            "TLS configuration for listener '{}' requires cert-file or acme block",
+                            "TLS configuration for listener '{}' requires cert-file, \
+                             combined-file, or an acme block",
                             listener.id
                         ),
                     ));
                     continue;
                 }
-            };
-
-            let key_file = match &tls.key_file {
-                Some(path) => path,
-                None => {
+                (Some(_), None, None) => {
                     result.add_error(ValidationError::new(
                         ErrorCategory::Certificate,
                         format!(
-                            "TLS configuration for listener '{}' requires key-file or acme block",
+                            "TLS configuration for listener '{}' requires key-file, \
+                             combined-file, or an acme block",
                             listener.id
                         ),
                     ));
@@ -204,6 +235,8 @@ mod tests {
 
     fn test_tls_config() -> TlsConfig {
         TlsConfig {
+            sni_cert_dirs: Vec::new(),
+            combined_file: None,
             cert_file: Some("/nonexistent/cert.pem".into()),
             key_file: Some("/nonexistent/key.pem".into()),
             additional_certs: vec![],
@@ -246,5 +279,79 @@ mod tests {
             .errors
             .iter()
             .any(|e| e.message.contains("Certificate not found")));
+    }
+
+    #[tokio::test]
+    async fn combined_pem_is_not_reported_as_a_missing_cert_file() {
+        let mut config = Config::default_for_testing();
+        let mut listener = test_listener_config();
+        if let Some(tls) = listener.tls.as_mut() {
+            tls.cert_file = None;
+            tls.key_file = None;
+            tls.combined_file = Some("/nonexistent/combined".into());
+        }
+        config.listeners = vec![listener];
+
+        let result = validate_certificates(&config).await;
+
+        // The file is still missing, but the complaint must name the file —
+        // not claim that cert-file was left out.
+        assert!(result
+            .errors
+            .iter()
+            .any(|e| e.message.contains("Certificate not found")));
+        assert!(!result
+            .errors
+            .iter()
+            .any(|e| e.message.contains("requires cert-file")));
+    }
+
+    #[tokio::test]
+    async fn unreadable_certificate_directory_is_an_error() {
+        let mut config = Config::default_for_testing();
+        let mut listener = test_listener_config();
+        if let Some(tls) = listener.tls.as_mut() {
+            tls.sni_cert_dirs = vec![crate::server::SniCertDir {
+                path: "/nonexistent/panel/certs".into(),
+                combined_name: "combined".to_string(),
+                cert_name: None,
+                key_name: None,
+            }];
+        }
+        config.listeners = vec![listener];
+
+        let result = validate_certificates(&config).await;
+
+        assert!(result
+            .errors
+            .iter()
+            .any(|e| e.message.contains("is unreadable")));
+    }
+
+    #[tokio::test]
+    async fn empty_certificate_directory_warns_but_does_not_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut config = Config::default_for_testing();
+        let mut listener = test_listener_config();
+        if let Some(tls) = listener.tls.as_mut() {
+            tls.sni_cert_dirs = vec![crate::server::SniCertDir {
+                path: dir.path().to_path_buf(),
+                combined_name: "combined".to_string(),
+                cert_name: None,
+                key_name: None,
+            }];
+        }
+        config.listeners = vec![listener];
+
+        let result = validate_certificates(&config).await;
+
+        assert!(result
+            .warnings
+            .iter()
+            .any(|w| w.message.contains("no usable certificates")));
+        assert!(!result
+            .errors
+            .iter()
+            .any(|e| e.message.contains("unreadable")));
     }
 }

@@ -107,7 +107,8 @@ pub use routes::{
 
 // Server
 pub use server::{
-    ListenerConfig, ListenerProtocol, ProxyProtocolConfig, ServerConfig, SniCertificate, TlsConfig,
+    ListenerConfig, ListenerProtocol, ProxyProtocolConfig, ServerConfig, SniCertDir,
+    SniCertificate, TlsConfig,
 };
 
 // Re-export TraceIdFormat from common for convenience

@@ -162,9 +162,35 @@ Not covered (deliberately): retries stay a route-level setting, so no profile
 touches them; profiles tune `timeouts` and `connection-pool` only, and set no
 TLS/HTTP-version/health-check values.
 
+### 18. cPanel/WHM AutoSSL certificate integration — ✅ done
+All three gaps closed. **Combined PEM**: `combined-file` on a `tls` block and on
+an `sni` block (cPanel's `/var/cpanel/ssl/apache_tls/<domain>/combined`).
+**Directory-watch SNI**: `sni-cert-dir "<path>"` scans one subdirectory per
+domain, taking hostnames from each certificate's CN/SAN, so a domain the panel
+issued for is served after a reload with no config edit (rescan is on reload,
+not inotify). A missing directory is a startup error; an empty one warns;
+unrelated subdirectories are skipped. **DCV passthrough**: two lint rules — a
+listener with panel-managed certs and no route covering
+`/.well-known/pki-validation/` or `/.well-known/acme-challenge/`, and a route
+serving those paths that runs filters or has the WAF on. Example:
+`config/examples/cpanel-autossl.kdl`; recipe section in
+`crates/proxy/docs/imunify360.md`.
+Design note found while testing: panel certificate stores routinely share a SAN
+across certificates (the server hostname on every cert), and a *discovered*
+certificate has no config entry to annotate with
+`hostnames`/`priority-hostnames`. Overlaps between discovered certificates
+therefore resolve to the first in path order (deterministic, logged) instead of
+the hard "ambiguous SNI" error, which would have made the feature unusable on a
+real box. Explicit `sni` entries still win over discovered ones.
+
+<details>
+<summary>Original entry</summary>
+
 ### 18. cPanel/WHM AutoSSL certificate integration
 Terminate TLS at Zentinel using the certs cPanel AutoSSL already issues, keeping the panel as certificate source-of-truth (users keep their SSL UI). Building blocks exist: `SniCertificate` (per-domain cert/key, SAN auto-extraction) + `CertificateReloader` hot reload — AutoSSL *renewals* rewrite files in place and are picked up without restart. Three gaps to close:
 - **Combined-PEM support**: cPanel stores `/var/cpanel/ssl/apache_tls/<domain>/combined` (key + cert + chain in one file); Zentinel expects separate `cert_file`/`key_file`. Accept combined PEM explicitly.
 - **Directory-watch SNI mode**: scan a cert directory (one subdir per domain, cPanel layout) so *new* domains get served without a config edit — or lean on the panel sync tool (#14) to regenerate entries.
 - **DCV passthrough**: once Zentinel owns :80/:443, AutoSSL domain-validation requests (`/.well-known/pki-validation/`, `/.well-known/acme-challenge/`) must route to Apache untouched and bypass WAF agents, or every renewal fails silently ~90 days after deploy. Bake into recipe #16 and add a lint rule: TLS listener fronting a panel backend without a DCV bypass route.
 Note: no TLS passthrough mode exists (verified), so termination at Zentinel is the only option — which is fine, WAF/routing require it anyway.
+
+</details>

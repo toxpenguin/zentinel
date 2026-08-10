@@ -180,13 +180,23 @@ listeners {
             client-auth false
             ocsp-stapling true
 
-            // SNI support for multiple domains
-            additional-certs {
-                cert hostnames=["api.example.com"] {
-                    cert-file "/etc/ssl/certs/api.crt"
-                    key-file "/etc/ssl/private/api.key"
-                }
+            // SNI support for multiple domains. Omit `hostnames` to take them
+            // from the certificate's CN/SAN.
+            sni {
+                hostnames "api.example.com"
+                cert-file "/etc/ssl/certs/api.crt"
+                key-file "/etc/ssl/private/api.key"
             }
+
+            // Single PEM holding certificate, chain, and key (the layout
+            // control panels write)
+            sni {
+                combined-file "/var/cpanel/ssl/apache_tls/shop.example.com/combined"
+            }
+
+            // Every domain under a directory, one subdirectory per domain,
+            // rescanned on reload
+            sni-cert-dir "/var/cpanel/ssl/apache_tls"
         }
     }
 

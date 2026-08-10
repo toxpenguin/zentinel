@@ -63,7 +63,7 @@
 use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::BufReader;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -75,7 +75,7 @@ use rustls::sign::CertifiedKey;
 use rustls::{RootCertStore, ServerConfig};
 use tracing::{debug, error, info, trace, warn};
 
-use zentinel_config::{TlsConfig, UpstreamTlsConfig};
+use zentinel_config::{SniCertificate, TlsConfig, UpstreamTlsConfig};
 
 /// Error type for TLS operations
 #[derive(Debug)]
@@ -132,10 +132,17 @@ impl SniResolver {
     pub fn from_config(config: &TlsConfig, listener_id: Option<&str>) -> Result<Self, TlsError> {
         let listener_id_str = listener_id.unwrap_or("unknown");
 
-        // Get cert_file and key_file - manual certs or ACME-managed paths
+        // Get cert_file and key_file - manual certs, a combined PEM, or
+        // ACME-managed paths
         let (cert_path_buf, key_path_buf);
         let (cert_file, key_file) = match (&config.cert_file, &config.key_file) {
             (Some(cert), Some(key)) => (cert.as_path(), key.as_path()),
+            // A combined PEM holds chain and key together; the loaders read
+            // the sections they need and ignore the rest.
+            _ if config.combined_file.is_some() => {
+                let combined = config.combined_file.as_ref().unwrap().as_path();
+                (combined, combined)
+            }
             _ if config.acme.is_some() => {
                 let acme = config.acme.as_ref().unwrap();
                 let primary = acme.domains.first().ok_or_else(|| {
@@ -149,7 +156,9 @@ impl SniResolver {
             }
             _ => {
                 return Err(TlsError::ConfigBuild(
-                    "TLS configuration requires cert_file and key_file (or ACME block)".to_string(),
+                    "TLS configuration requires cert_file and key_file, a combined_file, \
+                     or an ACME block"
+                        .to_string(),
                 ));
             }
         };
@@ -172,13 +181,31 @@ impl SniResolver {
         let mut priority_exact: HashSet<String> = HashSet::new();
         let mut priority_wildcard: HashSet<String> = HashSet::new();
 
+        // Which certificate file claimed each hostname, so an overlap between
+        // discovered certificates can name both sides.
+        let mut existing_paths: HashMap<String, String> = HashMap::new();
+
+        // Certificates discovered under `sni-cert-dir` are treated exactly
+        // like inline `sni` blocks with hostname auto-extraction, so a domain
+        // the panel just issued for needs no config edit.
+        let discovered = expand_sni_cert_dirs(config, listener_id_str)?;
+
         // Load SNI certificates
-        for (i, sni_config) in config.additional_certs.iter().enumerate() {
+        for (i, sni_config) in config
+            .additional_certs
+            .iter()
+            .chain(discovered.iter())
+            .enumerate()
+        {
             // Resolve paths for this SNI cert
             let (sni_cert_path_buf, sni_key_path_buf);
             let (sni_cert_path, sni_key_path) = match (&sni_config.cert_file, &sni_config.key_file)
             {
                 (Some(cert), Some(key)) => (cert.as_path(), key.as_path()),
+                _ if sni_config.combined_file.is_some() => {
+                    let combined = sni_config.combined_file.as_ref().unwrap().as_path();
+                    (combined, combined)
+                }
                 _ if sni_config.acme.is_some() => {
                     let acme = sni_config.acme.as_ref().unwrap();
                     let primary = acme.domains.first().ok_or_else(|| {
@@ -266,6 +293,16 @@ impl SniResolver {
                 );
             }
 
+            // Certificates found by scanning a directory have no config entry
+            // to annotate, so a shared hostname between two of them cannot be
+            // resolved with 'hostnames'/'priority-hostnames'. Panel stores
+            // routinely contain such overlaps (the server hostname added to
+            // every certificate, mail.* aliases). Refusing to start would make
+            // the whole feature unusable, so overlaps between discovered
+            // certificates resolve to the first in path order — deterministic
+            // across boots — and are reported loudly.
+            let discovered = i >= config.additional_certs.len();
+
             for hostname in &hostnames {
                 let hostname_lower = hostname.to_lowercase();
                 let is_priority = priority_set.contains(&hostname_lower);
@@ -302,6 +339,15 @@ impl SniResolver {
                                     "Skipping wildcard SNI registration, existing cert has priority"
                                 );
                                 continue;
+                            } else if discovered {
+                                warn!(
+                                    pattern = %hostname,
+                                    domain = %domain,
+                                    kept = %existing_paths.get(&hostname_lower).map_or("?", String::as_str),
+                                    ignored = %sni_cert_path.display(),
+                                    "Two discovered certificates claim the same wildcard; keeping the first in path order"
+                                );
+                                continue;
                             } else {
                                 // Neither has priority, ambiguity error
                                 return Err(TlsError::ConfigBuild(format!(
@@ -315,6 +361,8 @@ impl SniResolver {
                     }
 
                     wildcard_certs.insert(domain.clone(), cert.clone());
+                    existing_paths
+                        .insert(hostname_lower.clone(), sni_cert_path.display().to_string());
                     if is_priority {
                         priority_wildcard.insert(domain.clone());
                     }
@@ -353,6 +401,14 @@ impl SniResolver {
                                     "Skipping SNI registration, existing cert has priority"
                                 );
                                 continue;
+                            } else if discovered {
+                                warn!(
+                                    hostname = %hostname_lower,
+                                    kept = %existing_paths.get(&hostname_lower).map_or("?", String::as_str),
+                                    ignored = %sni_cert_path.display(),
+                                    "Two discovered certificates claim the same hostname; keeping the first in path order"
+                                );
+                                continue;
                             } else {
                                 // Neither has priority, ambiguity error
                                 return Err(TlsError::ConfigBuild(format!(
@@ -366,6 +422,8 @@ impl SniResolver {
                     }
 
                     sni_certs.insert(hostname_lower.clone(), cert.clone());
+                    existing_paths
+                        .insert(hostname_lower.clone(), sni_cert_path.display().to_string());
                     if is_priority {
                         priority_exact.insert(hostname_lower.clone());
                     }
@@ -1302,6 +1360,109 @@ pub fn validate_upstream_tls_config(config: &UpstreamTlsConfig) -> Result<(), Tl
     }
 
     Ok(())
+}
+
+// ============================================================================
+// Certificate Directory Expansion
+// ============================================================================
+
+/// Expand every `sni-cert-dir` into one SNI certificate entry per domain
+/// subdirectory.
+///
+/// Hostnames are left empty on purpose: they are auto-extracted from each
+/// certificate's CN/SAN, which is what lets a panel add a domain without any
+/// config change. Subdirectories that do not hold the expected files are
+/// skipped (a panel directory routinely contains unrelated entries), but a
+/// directory that cannot be read at all is a startup error.
+///
+/// # Errors
+///
+/// Returns [`TlsError::ConfigBuild`] when a configured directory is missing or
+/// unreadable.
+fn expand_sni_cert_dirs(
+    config: &TlsConfig,
+    listener_id: &str,
+) -> Result<Vec<SniCertificate>, TlsError> {
+    let mut expanded = Vec::new();
+
+    for dir in &config.sni_cert_dirs {
+        let entries = std::fs::read_dir(&dir.path).map_err(|e| {
+            TlsError::ConfigBuild(format!(
+                "sni-cert-dir {}: {} (listener '{}')",
+                dir.path.display(),
+                e,
+                listener_id
+            ))
+        })?;
+
+        // Sorted so certificate ordering — and therefore which cert wins a
+        // duplicate-hostname tie — is reproducible across boots.
+        let mut domain_dirs: Vec<PathBuf> = entries
+            .filter_map(std::result::Result::ok)
+            .map(|e| e.path())
+            .filter(|p| p.is_dir())
+            .collect();
+        domain_dirs.sort();
+
+        let mut found = 0usize;
+        let mut skipped = 0usize;
+        for domain_dir in &domain_dirs {
+            match dir.paths_for(domain_dir) {
+                Some((cert, key)) if cert == key => {
+                    expanded.push(SniCertificate {
+                        hostnames: Vec::new(),
+                        priority_hostnames: Vec::new(),
+                        cert_file: None,
+                        key_file: None,
+                        combined_file: Some(cert),
+                        acme: None,
+                    });
+                    found += 1;
+                }
+                Some((cert, key)) => {
+                    expanded.push(SniCertificate {
+                        hostnames: Vec::new(),
+                        priority_hostnames: Vec::new(),
+                        cert_file: Some(cert),
+                        key_file: Some(key),
+                        combined_file: None,
+                        acme: None,
+                    });
+                    found += 1;
+                }
+                None => {
+                    skipped += 1;
+                    debug!(
+                        listener_id = %listener_id,
+                        dir = %domain_dir.display(),
+                        "Skipping certificate directory: expected files not present"
+                    );
+                }
+            }
+        }
+
+        if found == 0 {
+            // Not fatal: a freshly provisioned panel box has no issued
+            // certificates yet. Loud, because a typo in the path looks
+            // exactly like this until the first TLS handshake fails.
+            warn!(
+                listener_id = %listener_id,
+                dir = %dir.path.display(),
+                subdirectories = domain_dirs.len(),
+                "No certificates found in sni-cert-dir"
+            );
+        } else {
+            info!(
+                listener_id = %listener_id,
+                dir = %dir.path.display(),
+                certificates = found,
+                skipped = skipped,
+                "Discovered per-domain certificates"
+            );
+        }
+    }
+
+    Ok(expanded)
 }
 
 // ============================================================================

@@ -27,6 +27,8 @@ fn fixtures_path() -> PathBuf {
 fn minimal_tls_config() -> TlsConfig {
     let fixtures = fixtures_path();
     TlsConfig {
+        sni_cert_dirs: Vec::new(),
+        combined_file: None,
         cert_file: Some(fixtures.join("server-default.crt")),
         key_file: Some(fixtures.join("server-default.key")),
         additional_certs: vec![],
@@ -45,10 +47,13 @@ fn minimal_tls_config() -> TlsConfig {
 fn multi_sni_tls_config() -> TlsConfig {
     let fixtures = fixtures_path();
     TlsConfig {
+        sni_cert_dirs: Vec::new(),
+        combined_file: None,
         cert_file: Some(fixtures.join("server-default.crt")),
         key_file: Some(fixtures.join("server-default.key")),
         additional_certs: vec![
             SniCertificate {
+                combined_file: None,
                 hostnames: vec!["api.example.com".to_string()],
                 priority_hostnames: vec![],
                 cert_file: Some(fixtures.join("server-api.crt")),
@@ -56,6 +61,7 @@ fn multi_sni_tls_config() -> TlsConfig {
                 acme: None,
             },
             SniCertificate {
+                combined_file: None,
                 hostnames: vec!["secure.example.com".to_string()],
                 priority_hostnames: vec![],
                 cert_file: Some(fixtures.join("server-secure.crt")),
@@ -78,9 +84,12 @@ fn multi_sni_tls_config() -> TlsConfig {
 fn wildcard_tls_config() -> TlsConfig {
     let fixtures = fixtures_path();
     TlsConfig {
+        sni_cert_dirs: Vec::new(),
+        combined_file: None,
         cert_file: Some(fixtures.join("server-default.crt")),
         key_file: Some(fixtures.join("server-default.key")),
         additional_certs: vec![SniCertificate {
+            combined_file: None,
             hostnames: vec!["*.example.com".to_string()],
             priority_hostnames: vec![],
             cert_file: Some(fixtures.join("server-wildcard.crt")),
@@ -102,6 +111,8 @@ fn wildcard_tls_config() -> TlsConfig {
 fn mtls_tls_config() -> TlsConfig {
     let fixtures = fixtures_path();
     TlsConfig {
+        sni_cert_dirs: Vec::new(),
+        combined_file: None,
         cert_file: Some(fixtures.join("server-default.crt")),
         key_file: Some(fixtures.join("server-default.key")),
         additional_certs: vec![],
@@ -266,10 +277,13 @@ mod sni_resolver {
         let fixtures = fixtures_path();
         // Create a config with both exact and wildcard for the same domain
         let config = TlsConfig {
+            sni_cert_dirs: Vec::new(),
+            combined_file: None,
             cert_file: Some(fixtures.join("server-default.crt")),
             key_file: Some(fixtures.join("server-default.key")),
             additional_certs: vec![
                 SniCertificate {
+                    combined_file: None,
                     hostnames: vec!["*.example.com".to_string()],
                     priority_hostnames: vec![],
                     cert_file: Some(fixtures.join("server-wildcard.crt")),
@@ -277,6 +291,7 @@ mod sni_resolver {
                     acme: None,
                 },
                 SniCertificate {
+                    combined_file: None,
                     hostnames: vec!["api.example.com".to_string()],
                     priority_hostnames: vec![],
                     cert_file: Some(fixtures.join("server-api.crt")),
@@ -312,6 +327,8 @@ mod sni_resolver {
     fn test_error_on_missing_cert_file() {
         let fixtures = fixtures_path();
         let config = TlsConfig {
+            sni_cert_dirs: Vec::new(),
+            combined_file: None,
             cert_file: Some(fixtures.join("nonexistent.crt")),
             key_file: Some(fixtures.join("server-default.key")),
             additional_certs: vec![],
@@ -337,6 +354,8 @@ mod sni_resolver {
     fn test_error_on_missing_key_file() {
         let fixtures = fixtures_path();
         let config = TlsConfig {
+            sni_cert_dirs: Vec::new(),
+            combined_file: None,
             cert_file: Some(fixtures.join("server-default.crt")),
             key_file: Some(fixtures.join("nonexistent.key")),
             additional_certs: vec![],
@@ -362,9 +381,12 @@ mod sni_resolver {
     fn test_error_on_missing_sni_cert_file() {
         let fixtures = fixtures_path();
         let config = TlsConfig {
+            sni_cert_dirs: Vec::new(),
+            combined_file: None,
             cert_file: Some(fixtures.join("server-default.crt")),
             key_file: Some(fixtures.join("server-default.key")),
             additional_certs: vec![SniCertificate {
+                combined_file: None,
                 hostnames: vec!["api.example.com".to_string()],
                 priority_hostnames: vec![],
                 cert_file: Some(fixtures.join("nonexistent.crt")),
@@ -398,9 +420,12 @@ mod sni_auto_extraction {
     fn auto_extract_tls_config() -> TlsConfig {
         let fixtures = fixtures_path();
         TlsConfig {
+            sni_cert_dirs: Vec::new(),
+            combined_file: None,
             cert_file: Some(fixtures.join("server-default.crt")),
             key_file: Some(fixtures.join("server-default.key")),
             additional_certs: vec![SniCertificate {
+                combined_file: None,
                 hostnames: vec![], // Empty: auto-extract from cert
                 priority_hostnames: vec![],
                 cert_file: Some(fixtures.join("server-api.crt")),
@@ -455,9 +480,12 @@ mod sni_auto_extraction {
         // server-wildcard.crt has SAN: DNS:*.example.com, DNS:example.com, DNS:localhost
         let fixtures = fixtures_path();
         let config = TlsConfig {
+            sni_cert_dirs: Vec::new(),
+            combined_file: None,
             cert_file: Some(fixtures.join("server-default.crt")),
             key_file: Some(fixtures.join("server-default.key")),
             additional_certs: vec![SniCertificate {
+                combined_file: None,
                 hostnames: vec![], // Auto-extract
                 priority_hostnames: vec![],
                 cert_file: Some(fixtures.join("server-wildcard.crt")),
@@ -493,10 +521,13 @@ mod sni_auto_extraction {
         // Mix of explicit hostnames and auto-extracted
         let fixtures = fixtures_path();
         let config = TlsConfig {
+            sni_cert_dirs: Vec::new(),
+            combined_file: None,
             cert_file: Some(fixtures.join("server-default.crt")),
             key_file: Some(fixtures.join("server-default.key")),
             additional_certs: vec![
                 SniCertificate {
+                    combined_file: None,
                     hostnames: vec!["secure.example.com".to_string()], // Explicit
                     priority_hostnames: vec![],
                     cert_file: Some(fixtures.join("server-secure.crt")),
@@ -504,6 +535,7 @@ mod sni_auto_extraction {
                     acme: None,
                 },
                 SniCertificate {
+                    combined_file: None,
                     hostnames: vec![], // Auto-extract from server-api.crt
                     priority_hostnames: vec![],
                     cert_file: Some(fixtures.join("server-api.crt")),
@@ -538,10 +570,13 @@ mod sni_auto_extraction {
         // Two certs with overlapping SAN entries should error
         let fixtures = fixtures_path();
         let config = TlsConfig {
+            sni_cert_dirs: Vec::new(),
+            combined_file: None,
             cert_file: Some(fixtures.join("server-default.crt")),
             key_file: Some(fixtures.join("server-default.key")),
             additional_certs: vec![
                 SniCertificate {
+                    combined_file: None,
                     hostnames: vec![], // Auto-extract: SAN includes "localhost"
                     priority_hostnames: vec![],
                     cert_file: Some(fixtures.join("server-api.crt")),
@@ -549,6 +584,7 @@ mod sni_auto_extraction {
                     acme: None,
                 },
                 SniCertificate {
+                    combined_file: None,
                     hostnames: vec![], // Auto-extract: SAN also includes "localhost"
                     priority_hostnames: vec![],
                     cert_file: Some(fixtures.join("server-secure.crt")),
@@ -585,9 +621,12 @@ mod sni_auto_extraction {
         // When hostnames are explicitly set, CN/SAN should not be used
         let fixtures = fixtures_path();
         let config = TlsConfig {
+            sni_cert_dirs: Vec::new(),
+            combined_file: None,
             cert_file: Some(fixtures.join("server-default.crt")),
             key_file: Some(fixtures.join("server-default.key")),
             additional_certs: vec![SniCertificate {
+                combined_file: None,
                 hostnames: vec!["custom.example.com".to_string()], // Explicit, not in cert
                 priority_hostnames: vec![],
                 cert_file: Some(fixtures.join("server-api.crt")),
@@ -651,6 +690,8 @@ mod acme_resolver {
     /// Build a TlsConfig with ACME config and no manual cert/key paths
     fn acme_tls_config(storage: PathBuf) -> TlsConfig {
         TlsConfig {
+            sni_cert_dirs: Vec::new(),
+            combined_file: None,
             cert_file: None,
             key_file: None,
             additional_certs: vec![],
@@ -721,6 +762,8 @@ mod acme_resolver {
     #[test]
     fn test_from_config_no_cert_no_acme_errors() {
         let config = TlsConfig {
+            sni_cert_dirs: Vec::new(),
+            combined_file: None,
             cert_file: None,
             key_file: None,
             additional_certs: vec![],
@@ -815,9 +858,12 @@ mod acme_resolver {
         std::fs::copy(fixtures.join("server-api.key"), domain_dir.join("key.pem")).unwrap();
 
         let config = TlsConfig {
+            sni_cert_dirs: Vec::new(),
+            combined_file: None,
             cert_file: Some(fixtures.join("server-default.crt")),
             key_file: Some(fixtures.join("server-default.key")),
             additional_certs: vec![SniCertificate {
+                combined_file: None,
                 hostnames: vec![], // Implicit: should use acme.domains
                 priority_hostnames: vec![],
                 cert_file: None,
@@ -874,9 +920,12 @@ mod acme_resolver {
         std::fs::copy(fixtures.join("server-api.key"), domain_dir.join("key.pem")).unwrap();
 
         let config = TlsConfig {
+            sni_cert_dirs: Vec::new(),
+            combined_file: None,
             cert_file: Some(fixtures.join("server-default.crt")),
             key_file: Some(fixtures.join("server-default.key")),
             additional_certs: vec![SniCertificate {
+                combined_file: None,
                 hostnames: vec![],
                 priority_hostnames: vec![],
                 cert_file: None,
@@ -920,9 +969,12 @@ mod acme_resolver {
         let fixtures = fixtures_path();
 
         let config = TlsConfig {
+            sni_cert_dirs: Vec::new(),
+            combined_file: None,
             cert_file: Some(fixtures.join("server-default.crt")),
             key_file: Some(fixtures.join("server-default.key")),
             additional_certs: vec![SniCertificate {
+                combined_file: None,
                 hostnames: vec!["app.com".to_string()],
                 priority_hostnames: vec![],
                 cert_file: None,
@@ -1122,6 +1174,8 @@ mod hot_reload {
 
         // Create resolver with initial certs
         let config = TlsConfig {
+            sni_cert_dirs: Vec::new(),
+            combined_file: None,
             cert_file: Some(cert_path.clone()),
             key_file: Some(key_path.clone()),
             additional_certs: vec![],
@@ -1175,6 +1229,8 @@ mod hot_reload {
         std::fs::copy(fixtures.join("server-default.key"), &key_path).unwrap();
 
         let config = TlsConfig {
+            sni_cert_dirs: Vec::new(),
+            combined_file: None,
             cert_file: Some(cert_path.clone()),
             key_file: Some(key_path.clone()),
             additional_certs: vec![],
@@ -1221,6 +1277,8 @@ mod hot_reload {
         std::fs::copy(fixtures.join("server-default.key"), &key_path).unwrap();
 
         let config = TlsConfig {
+            sni_cert_dirs: Vec::new(),
+            combined_file: None,
             cert_file: Some(cert_path.clone()),
             key_file: Some(key_path.clone()),
             additional_certs: vec![],
@@ -1347,6 +1405,8 @@ mod certificate_reloader {
         std::fs::copy(fixtures.join("server-default.key"), &key_path).unwrap();
 
         let config2 = TlsConfig {
+            sni_cert_dirs: Vec::new(),
+            combined_file: None,
             cert_file: Some(cert_path.clone()),
             key_file: Some(key_path.clone()),
             additional_certs: vec![],
@@ -1450,6 +1510,8 @@ mod validation {
     fn test_validate_missing_cert_file() {
         let fixtures = fixtures_path();
         let config = TlsConfig {
+            sni_cert_dirs: Vec::new(),
+            combined_file: None,
             cert_file: Some(fixtures.join("nonexistent.crt")),
             key_file: Some(fixtures.join("server-default.key")),
             additional_certs: vec![],
@@ -1477,6 +1539,8 @@ mod validation {
     fn test_validate_missing_key_file() {
         let fixtures = fixtures_path();
         let config = TlsConfig {
+            sni_cert_dirs: Vec::new(),
+            combined_file: None,
             cert_file: Some(fixtures.join("server-default.crt")),
             key_file: Some(fixtures.join("nonexistent.key")),
             additional_certs: vec![],
@@ -1504,9 +1568,12 @@ mod validation {
     fn test_validate_missing_sni_cert() {
         let fixtures = fixtures_path();
         let config = TlsConfig {
+            sni_cert_dirs: Vec::new(),
+            combined_file: None,
             cert_file: Some(fixtures.join("server-default.crt")),
             key_file: Some(fixtures.join("server-default.key")),
             additional_certs: vec![SniCertificate {
+                combined_file: None,
                 hostnames: vec!["test.example.com".to_string()],
                 priority_hostnames: vec![],
                 cert_file: Some(fixtures.join("nonexistent.crt")),
@@ -1531,6 +1598,8 @@ mod validation {
     fn test_validate_mtls_missing_ca_file() {
         let fixtures = fixtures_path();
         let config = TlsConfig {
+            sni_cert_dirs: Vec::new(),
+            combined_file: None,
             cert_file: Some(fixtures.join("server-default.crt")),
             key_file: Some(fixtures.join("server-default.key")),
             additional_certs: vec![],
@@ -1630,10 +1699,13 @@ mod server_config {
         // With priority-hostnames on server-api.crt, it wins for "localhost".
         let fixtures = fixtures_path();
         let config = TlsConfig {
+            sni_cert_dirs: Vec::new(),
+            combined_file: None,
             cert_file: Some(fixtures.join("server-default.crt")),
             key_file: Some(fixtures.join("server-default.key")),
             additional_certs: vec![
                 SniCertificate {
+                    combined_file: None,
                     hostnames: vec![],
                     priority_hostnames: vec!["localhost".to_string()],
                     cert_file: Some(fixtures.join("server-api.crt")),
@@ -1641,6 +1713,7 @@ mod server_config {
                     acme: None,
                 },
                 SniCertificate {
+                    combined_file: None,
                     hostnames: vec![],
                     priority_hostnames: vec![],
                     cert_file: Some(fixtures.join("server-secure.crt")),
@@ -1682,9 +1755,12 @@ mod server_config {
         // priority-hostnames only lists "localhost", but all SANs should be registered.
         let fixtures = fixtures_path();
         let config = TlsConfig {
+            sni_cert_dirs: Vec::new(),
+            combined_file: None,
             cert_file: Some(fixtures.join("server-default.crt")),
             key_file: Some(fixtures.join("server-default.key")),
             additional_certs: vec![SniCertificate {
+                combined_file: None,
                 hostnames: vec![],
                 priority_hostnames: vec!["localhost".to_string()],
                 cert_file: Some(fixtures.join("server-api.crt")),
@@ -1722,10 +1798,13 @@ mod server_config {
         // Both certs claim priority for "localhost"
         let fixtures = fixtures_path();
         let config = TlsConfig {
+            sni_cert_dirs: Vec::new(),
+            combined_file: None,
             cert_file: Some(fixtures.join("server-default.crt")),
             key_file: Some(fixtures.join("server-default.key")),
             additional_certs: vec![
                 SniCertificate {
+                    combined_file: None,
                     hostnames: vec![],
                     priority_hostnames: vec!["localhost".to_string()],
                     cert_file: Some(fixtures.join("server-api.crt")),
@@ -1733,6 +1812,7 @@ mod server_config {
                     acme: None,
                 },
                 SniCertificate {
+                    combined_file: None,
                     hostnames: vec![],
                     priority_hostnames: vec!["localhost".to_string()],
                     cert_file: Some(fixtures.join("server-secure.crt")),
@@ -1770,10 +1850,13 @@ mod server_config {
         // Both have "localhost". Priority on wildcard cert wins.
         let fixtures = fixtures_path();
         let config = TlsConfig {
+            sni_cert_dirs: Vec::new(),
+            combined_file: None,
             cert_file: Some(fixtures.join("server-default.crt")),
             key_file: Some(fixtures.join("server-default.key")),
             additional_certs: vec![
                 SniCertificate {
+                    combined_file: None,
                     hostnames: vec![],
                     priority_hostnames: vec!["localhost".to_string()],
                     cert_file: Some(fixtures.join("server-wildcard.crt")),
@@ -1781,6 +1864,7 @@ mod server_config {
                     acme: None,
                 },
                 SniCertificate {
+                    combined_file: None,
                     hostnames: vec![],
                     priority_hostnames: vec![],
                     cert_file: Some(fixtures.join("server-api.crt")),
@@ -1823,10 +1907,13 @@ mod server_config {
         // The priority cert should still win.
         let fixtures = fixtures_path();
         let config = TlsConfig {
+            sni_cert_dirs: Vec::new(),
+            combined_file: None,
             cert_file: Some(fixtures.join("server-default.crt")),
             key_file: Some(fixtures.join("server-default.key")),
             additional_certs: vec![
                 SniCertificate {
+                    combined_file: None,
                     hostnames: vec![],
                     priority_hostnames: vec![],
                     cert_file: Some(fixtures.join("server-secure.crt")),
@@ -1834,6 +1921,7 @@ mod server_config {
                     acme: None,
                 },
                 SniCertificate {
+                    combined_file: None,
                     hostnames: vec![],
                     priority_hostnames: vec!["localhost".to_string()],
                     cert_file: Some(fixtures.join("server-api.crt")),

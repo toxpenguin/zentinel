@@ -443,6 +443,7 @@ impl ConfigTranslator {
             match self.cert_manager.resolve(&sref, hostnames.clone()).await {
                 Ok(cert) => {
                     additional_certs.push(SniCertificate {
+                        combined_file: None,
                         hostnames: cert.hostnames.clone(),
                         priority_hostnames: vec![],
                         cert_file: Some(cert.cert_path),
@@ -461,6 +462,8 @@ impl ConfigTranslator {
         }
 
         Some(TlsConfig {
+            sni_cert_dirs: Vec::new(),
+            combined_file: None,
             cert_file: Some(default_cert.cert_path),
             key_file: Some(default_cert.key_path),
             additional_certs,

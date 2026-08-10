@@ -79,8 +79,10 @@ logging, rate limiting, and geo filtering.
 
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
-| `cert-file` | `string` | **required** | Certificate file path |
-| `key-file` | `string` | **required** | Private key file path |
+| `cert-file` | `string` | **required*** | Certificate file path |
+| `key-file` | `string` | **required*** | Private key file path |
+| `combined-file` | `string` | - | Single PEM holding certificate, chain, and key (control-panel layout). Mutually exclusive with `cert-file`/`key-file` |
+| `sni-cert-dir` | `[SniCertDir]` | `[]` | Directories of per-domain certificates, rescanned on reload (see below) |
 | `ca-file` | `string` | - | CA certificate for client verification |
 | `min-version` | `string` | `"tls1.2"` | Minimum TLS version |
 | `max-version` | `string` | - | Maximum TLS version |
@@ -90,6 +92,57 @@ logging, rate limiting, and geo filtering.
 | `session-resumption` | `bool` | `true` | Enable session resumption |
 | `additional-certs` | `[SniCertificate]` | `[]` | Additional certs for SNI |
 | `acme` | `AcmeConfig` | - | ACME automatic certificate management |
+
+\* Exactly one certificate source is required: `cert-file` + `key-file`, a
+`combined-file`, or an `acme` block.
+
+### SniCertDir
+
+A directory holding one subdirectory per domain — the layout control panels
+produce. Hostnames come from each certificate's CN/SAN, so a domain the panel
+just issued for is served after a reload with no config edit.
+
+```kdl
+tls {
+    // cPanel AutoSSL: /var/cpanel/ssl/apache_tls/<domain>/combined
+    combined-file "/var/cpanel/ssl/apache_tls/server.example.com/combined"
+    sni-cert-dir "/var/cpanel/ssl/apache_tls"
+
+    // Split layout, one subdirectory per domain
+    sni-cert-dir "/etc/panel/certs" {
+        cert-file "fullchain.pem"
+        key-file "privkey.pem"
+    }
+}
+```
+
+| Property | Type | Default | Description |
+|----------|------|---------|-------------|
+| *(argument)* | `string` | **required** | Directory to scan |
+| `combined-file` | `string` | `"combined"` | File name inside each subdirectory holding a combined PEM |
+| `cert-file` | `string` | - | Certificate file name for split layouts (requires `key-file`) |
+| `key-file` | `string` | - | Key file name for split layouts (requires `cert-file`) |
+
+Behaviour:
+
+- **Missing directory is a startup error.** An empty one is a warning — a
+  freshly provisioned box has no certificates yet — and subdirectories without
+  the expected files are skipped, since panel directories hold unrelated
+  entries.
+- **Rescan happens on config reload** (SIGHUP), not on file-system events.
+- **Explicitly configured `sni` entries win** over discovered ones.
+- Two *discovered* certificates claiming the same hostname cannot be
+  disambiguated with `hostnames`/`priority-hostnames` (there is no config
+  entry to annotate), so the first in path order wins, deterministically, and
+  the overlap is logged. Panel stores routinely share names this way.
+
+**Certificate renewal:** when the panel owns issuance, its domain-validation
+requests must still reach it. `zentinel lint` warns when a listener serves
+panel-managed certificates and no route matches
+`/.well-known/pki-validation/` or `/.well-known/acme-challenge/`, and when a
+route serving those paths runs filters or has the WAF enabled — the failure
+mode is otherwise invisible until the first renewal, ~90 days after
+deployment. See `config/examples/cpanel-autossl.kdl`.
 
 ### AcmeConfig
 

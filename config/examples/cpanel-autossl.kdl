@@ -1,0 +1,115 @@
+// Example: Zentinel terminating TLS with certificates cPanel AutoSSL issued
+//
+// cPanel stays the certificate authority-of-record: users keep the SSL/TLS UI,
+// AutoSSL keeps issuing and renewing, and Zentinel simply serves what the panel
+// wrote to disk. Two pieces make that work:
+//
+//   1. `sni-cert-dir` — cPanel writes one directory per domain under
+//      /var/cpanel/ssl/apache_tls/<domain>/combined (certificate + chain + key
+//      in a single PEM). Zentinel scans that directory and takes hostnames from
+//      each certificate's CN/SAN, so a domain added in the panel is served
+//      after a reload with no config edit.
+//
+//   2. The DCV passthrough route below — AutoSSL proves domain control over
+//      plain HTTP. Once Zentinel owns :80, those requests must reach Apache
+//      untouched, or every renewal fails. Nothing breaks the day this is
+//      missing; it breaks ~90 days later when the first certificate expires.
+//      `zentinel lint` warns when panel-managed certs have no such route, or
+//      when the route that serves them runs filters.
+//
+// Reload picks up new domains:  systemctl reload zentinel  (or SIGHUP)
+//
+// See crates/proxy/docs/imunify360.md for the full hosting-stack recipe.
+
+system {
+    worker-threads 0
+    max-connections 10000
+    graceful-shutdown-timeout-secs 30
+}
+
+listeners {
+    // Port 80 stays open: AutoSSL and any ACME client validate over it.
+    listener "http" {
+        address "0.0.0.0:80"
+        protocol "http"
+        request-timeout-secs 60
+    }
+
+    listener "https" {
+        address "0.0.0.0:443"
+        protocol "https"
+        request-timeout-secs 60
+
+        tls {
+            // Fallback certificate for requests with no SNI match — the
+            // server's own hostname certificate is the usual choice. cPanel
+            // writes it in the same combined form.
+            combined-file "/var/cpanel/ssl/apache_tls/server.example.com/combined"
+
+            // Every domain AutoSSL has issued for. Rescanned on reload.
+            sni-cert-dir "/var/cpanel/ssl/apache_tls"
+
+            min-version "1.2"
+        }
+    }
+}
+
+upstreams {
+    upstream "apache" {
+        profile "apache-shared-hosting"
+        target "127.0.0.1:8080"
+        proxy-protocol "v2"
+
+        health-check {
+            interval-secs 10
+            timeout-secs 5
+            path "/"
+            expected-status 200
+        }
+    }
+}
+
+routes {
+    // Domain-control validation. Highest priority, no filters, no WAF: a
+    // certificate authority fetches these paths unauthenticated and with a
+    // short timeout, so anything that inspects, challenges, or delays them
+    // turns into a failed renewal.
+    //
+    //   /.well-known/pki-validation/  — Sectigo/Comodo, what AutoSSL uses
+    //   /.well-known/acme-challenge/  — Let's Encrypt HTTP-01
+    route "dcv-passthrough" {
+        priority "high"
+        matches {
+            path-prefix "/.well-known/pki-validation/"
+        }
+        upstream "apache"
+        policies {
+            timeout-secs 30
+            failure-mode "closed"
+        }
+    }
+
+    route "acme-passthrough" {
+        priority "high"
+        matches {
+            path-prefix "/.well-known/acme-challenge/"
+        }
+        upstream "apache"
+        policies {
+            timeout-secs 30
+            failure-mode "closed"
+        }
+    }
+
+    route "default" {
+        priority "normal"
+        matches {
+            path-prefix "/"
+        }
+        upstream "apache"
+        policies {
+            timeout-secs 60
+            failure-mode "closed"
+        }
+    }
+}

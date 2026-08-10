@@ -4,7 +4,7 @@
 //! and its listeners (ports/addresses it binds to).
 
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use validator::Validate;
 
 use zentinel_common::types::{TlsVersion, TraceIdFormat};
@@ -171,10 +171,22 @@ pub struct TlsConfig {
     /// Optional when ACME is configured
     pub key_file: Option<PathBuf>,
 
+    /// Combined PEM holding the default certificate, its chain, and the
+    /// private key in one file (the layout cPanel writes for AutoSSL).
+    /// Mutually exclusive with `cert_file`/`key_file`.
+    #[serde(default)]
+    pub combined_file: Option<PathBuf>,
+
     /// Additional certificates for SNI support
     /// Maps hostname patterns to certificate configurations
     #[serde(default)]
     pub additional_certs: Vec<SniCertificate>,
+
+    /// Directories scanned for per-domain SNI certificates (one subdirectory
+    /// per domain — the layout control panels use). Rescanned on every config
+    /// reload, so domains added by the panel are served without a config edit.
+    #[serde(default)]
+    pub sni_cert_dirs: Vec<SniCertDir>,
 
     /// CA certificate file path for client verification (mTLS)
     pub ca_file: Option<PathBuf>,
@@ -445,8 +457,65 @@ pub struct SniCertificate {
     /// Private key file path (optional if acme is configured)
     pub key_file: Option<PathBuf>,
 
+    /// Combined PEM holding certificate, chain, and private key in one file.
+    /// Mutually exclusive with `cert_file`/`key_file` and with `acme`.
+    #[serde(default)]
+    pub combined_file: Option<PathBuf>,
+
     /// ACME configuration for this certificate
     pub acme: Option<AcmeConfig>,
+}
+
+/// A directory of per-domain certificates, one subdirectory per domain.
+///
+/// cPanel's AutoSSL writes `/var/cpanel/ssl/apache_tls/<domain>/combined`;
+/// pointing Zentinel at the parent directory means every domain the panel
+/// issues for is served at the edge, with the panel still owning issuance and
+/// renewal. Hostnames come from each certificate's CN/SAN, so a new domain
+/// needs no config edit — only a reload.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SniCertDir {
+    /// Directory containing one subdirectory per domain.
+    pub path: PathBuf,
+
+    /// File name inside each subdirectory holding a combined PEM
+    /// (certificate + chain + key). Defaults to cPanel's `combined`.
+    #[serde(default = "default_combined_file_name")]
+    pub combined_name: String,
+
+    /// File name holding just the certificate chain, for split layouts.
+    /// When set, `key_name` is required and `combined_name` is ignored.
+    #[serde(default)]
+    pub cert_name: Option<String>,
+
+    /// File name holding just the private key, for split layouts.
+    #[serde(default)]
+    pub key_name: Option<String>,
+}
+
+impl SniCertDir {
+    /// Certificate and key paths for one domain subdirectory, or `None` when
+    /// the subdirectory does not hold the expected files.
+    ///
+    /// Returns `(cert_path, key_path)`; both are the same path for the
+    /// combined layout.
+    #[must_use]
+    pub fn paths_for(&self, domain_dir: &Path) -> Option<(PathBuf, PathBuf)> {
+        match (&self.cert_name, &self.key_name) {
+            (Some(cert), Some(key)) => {
+                let (cert, key) = (domain_dir.join(cert), domain_dir.join(key));
+                (cert.is_file() && key.is_file()).then_some((cert, key))
+            }
+            _ => {
+                let combined = domain_dir.join(&self.combined_name);
+                combined.is_file().then_some((combined.clone(), combined))
+            }
+        }
+    }
+}
+
+fn default_combined_file_name() -> String {
+    "combined".to_string()
 }
 
 // ============================================================================

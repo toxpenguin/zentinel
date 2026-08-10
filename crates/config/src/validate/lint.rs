@@ -133,7 +133,112 @@ pub fn lint_config(config: &Config) -> ValidationResult {
     // Shadow/mirror traffic must not hit an upstream that serves live traffic.
     check_shadow_upstreams(config, &mut result);
 
+    // Panel-issued certificates need their validation requests to reach the
+    // panel, uninspected.
+    check_dcv_passthrough(config, &mut result);
+
     result
+}
+
+// ============================================================================
+// Rule: domain-control-validation (DCV) passthrough
+// ============================================================================
+
+/// Path prefixes certificate authorities fetch during domain validation.
+/// `acme-challenge` is HTTP-01 (Let's Encrypt, ZeroSSL); `pki-validation` is
+/// what Sectigo/Comodo — and therefore cPanel AutoSSL — use.
+const DCV_PREFIXES: &[&str] = &[
+    "/.well-known/acme-challenge/",
+    "/.well-known/pki-validation/",
+];
+
+/// Warn about configurations where certificate renewal will fail silently.
+///
+/// When Zentinel owns :80/:443 in front of a control panel, the panel keeps
+/// issuing and renewing certificates — but only if the CA's validation
+/// requests still reach it. Nothing breaks on the day this is misconfigured;
+/// it breaks at the first renewal, roughly 90 days later.
+fn check_dcv_passthrough(config: &Config, result: &mut ValidationResult) {
+    let panel_managed_certs = config.listeners.iter().any(|listener| {
+        listener
+            .tls
+            .as_ref()
+            .is_some_and(|tls| !tls.sni_cert_dirs.is_empty())
+    });
+
+    // Routes the operator pointed at a validation path on purpose, and routes
+    // that merely happen to cover one (a catch-all, typically).
+    let (dedicated, covering): (Vec<&RouteConfig>, Vec<&RouteConfig>) = config
+        .routes
+        .iter()
+        .filter(|route| route_covers_dcv(route))
+        .partition(|route| route_is_dedicated_dcv(route));
+
+    if panel_managed_certs && dedicated.is_empty() && covering.is_empty() {
+        result.add_warning(ValidationWarning::new(format!(
+            "TLS listener serves panel-managed certificates (sni-cert-dir) but no route \
+             matches {}. Domain-validation requests will not reach the panel, so \
+             certificate renewals fail — silently, about 90 days after deployment. \
+             Add a high-priority passthrough route to the panel's backend",
+            DCV_PREFIXES.join(" or ")
+        )));
+    }
+
+    // A validation request that gets inspected can be blocked, rewritten, or
+    // delayed past the CA's timeout; the result is the same failed renewal.
+    // Dedicated validation routes are always checked — writing the path out
+    // states the intent. Broad routes are only checked when the config
+    // actually depends on validation working (panel-managed certificates),
+    // otherwise every catch-all with a filter would warn.
+    let inspected = dedicated
+        .iter()
+        .chain(covering.iter().filter(|_| panel_managed_certs));
+
+    for route in inspected {
+        if !route.filters.is_empty() {
+            result.add_warning(ValidationWarning::new(format!(
+                "Route '{}' serves domain-validation requests but runs filters ({}). \
+                 Certificate authorities fetch these paths unauthenticated and with a \
+                 short timeout — a WAF or auth agent blocking one fails the renewal. \
+                 Serve validation paths without filters",
+                route.id,
+                route.filters.join(", ")
+            )));
+        }
+        if route.waf_enabled {
+            result.add_warning(ValidationWarning::new(format!(
+                "Route '{}' serves domain-validation requests with the WAF enabled. \
+                 Disable WAF inspection on validation paths so renewals cannot be blocked",
+                route.id
+            )));
+        }
+    }
+}
+
+/// Whether requests to a DCV path can reach this route at all — either it was
+/// written for validation paths, or its match is broad enough to include them.
+fn route_covers_dcv(route: &RouteConfig) -> bool {
+    route.matches.iter().any(|condition| match condition {
+        MatchCondition::PathPrefix(prefix) => DCV_PREFIXES
+            .iter()
+            .any(|dcv| dcv.starts_with(prefix.as_str()) || prefix.starts_with(dcv)),
+        // An exact path can only be a validation URL if it sits under one.
+        MatchCondition::Path(path) => DCV_PREFIXES.iter().any(|dcv| path.starts_with(dcv)),
+        _ => false,
+    })
+}
+
+/// Whether the route names a validation path explicitly, rather than covering
+/// it by being broad.
+fn route_is_dedicated_dcv(route: &RouteConfig) -> bool {
+    route.matches.iter().any(|condition| {
+        let path = match condition {
+            MatchCondition::PathPrefix(prefix) => prefix.as_str(),
+            MatchCondition::Path(path) => path.as_str(),
+            _ => return false,
+        };
+        path.starts_with("/.well-known/")
+    })
 }
 
 // ============================================================================
@@ -590,6 +695,8 @@ mod tests {
             address: address.to_string(),
             protocol: crate::ListenerProtocol::Http,
             tls: Some(TlsConfig {
+                sni_cert_dirs: Vec::new(),
+                combined_file: None,
                 cert_file: Some(PathBuf::from("/path/to/cert.pem")),
                 key_file: Some(PathBuf::from("/path/to/key.pem")),
                 additional_certs: vec![],
@@ -628,6 +735,118 @@ mod tests {
             .warnings
             .iter()
             .any(|w| w.message.contains("can spoof its address")));
+    }
+
+    /// A TLS listener whose certificates come from a control panel.
+    fn panel_tls_listener() -> ListenerConfig {
+        let mut listener = test_tls_listener_config("0.0.0.0:443");
+        if let Some(tls) = listener.tls.as_mut() {
+            tls.sni_cert_dirs = vec![crate::server::SniCertDir {
+                path: PathBuf::from("/var/cpanel/ssl/apache_tls"),
+                combined_name: "combined".to_string(),
+                cert_name: None,
+                key_name: None,
+            }];
+        }
+        listener
+    }
+
+    fn dcv_route() -> RouteConfig {
+        let mut route = test_route_config();
+        route.id = "acme-passthrough".to_string();
+        route.matches = vec![MatchCondition::PathPrefix(
+            "/.well-known/acme-challenge/".to_string(),
+        )];
+        route
+    }
+
+    #[test]
+    fn lint_warns_when_panel_certs_have_no_validation_route() {
+        let mut config = Config::default_for_testing();
+        config.listeners = vec![panel_tls_listener()];
+        config.routes = vec![];
+
+        let result = lint_config(&config);
+
+        assert!(
+            result
+                .warnings
+                .iter()
+                .any(|w| w.message.contains("certificate renewals fail")),
+            "expected a DCV passthrough warning, got: {:?}",
+            result.warnings
+        );
+    }
+
+    #[test]
+    fn lint_accepts_panel_certs_with_a_validation_route() {
+        let mut config = Config::default_for_testing();
+        config.listeners = vec![panel_tls_listener()];
+        config.routes = vec![dcv_route()];
+
+        let result = lint_config(&config);
+
+        assert!(!result
+            .warnings
+            .iter()
+            .any(|w| w.message.contains("certificate renewals fail")));
+    }
+
+    #[test]
+    fn lint_warns_when_validation_requests_are_inspected() {
+        let mut config = Config::default_for_testing();
+        let mut route = dcv_route();
+        route.filters = vec!["waf-agent".to_string()];
+        route.waf_enabled = true;
+        config.listeners = vec![panel_tls_listener()];
+        config.routes = vec![route];
+
+        let result = lint_config(&config);
+
+        assert!(result
+            .warnings
+            .iter()
+            .any(|w| w.message.contains("runs filters")));
+        assert!(result
+            .warnings
+            .iter()
+            .any(|w| w.message.contains("WAF enabled")));
+    }
+
+    #[test]
+    fn lint_leaves_catch_all_routes_alone_without_panel_certs() {
+        // A filtered catch-all covers the validation paths, but nothing in
+        // this config depends on validation working — stay quiet.
+        let mut config = Config::default_for_testing();
+        let mut route = test_route_config();
+        route.matches = vec![MatchCondition::PathPrefix("/".to_string())];
+        route.filters = vec!["waf-agent".to_string()];
+        config.listeners = vec![test_tls_listener_config("0.0.0.0:443")];
+        config.routes = vec![route];
+
+        let result = lint_config(&config);
+
+        assert!(!result
+            .warnings
+            .iter()
+            .any(|w| w.message.contains("domain-validation")));
+    }
+
+    #[test]
+    fn lint_warns_when_panel_traffic_reaches_validation_through_a_filtered_catch_all() {
+        let mut config = Config::default_for_testing();
+        let mut route = test_route_config();
+        route.matches = vec![MatchCondition::PathPrefix("/".to_string())];
+        route.filters = vec!["waf-agent".to_string()];
+        config.listeners = vec![panel_tls_listener()];
+        config.routes = vec![route];
+
+        let result = lint_config(&config);
+
+        assert!(result
+            .warnings
+            .iter()
+            .any(|w| w.message.contains("runs filters")));
     }
 
     #[test]

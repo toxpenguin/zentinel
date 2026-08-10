@@ -98,6 +98,23 @@ PROXY protocol: emits v2 header on new connections (backend sees real client IP;
   format — run the Coraza agent (`agents/coraza-waf/README.md`) pointed at the
   panel's exported rule directory; the two can also run side by side while you
   compare verdicts.
-- cPanel AutoSSL certificate *reuse* at the Zentinel edge (serving the certs
-  AutoSSL obtained): not wired here — IDEAS #18.
+- cPanel AutoSSL certificate *reuse* at the Zentinel edge: supported — point
+  the TLS listener at the panel's certificate store and keep the validation
+  paths flowing to Apache:
+
+  ```kdl
+  tls {
+      combined-file "/var/cpanel/ssl/apache_tls/server.example.com/combined"
+      sni-cert-dir "/var/cpanel/ssl/apache_tls"
+  }
+  ```
+
+  cPanel stays the certificate source of truth (users keep the SSL/TLS UI),
+  hostnames come from each certificate's CN/SAN, and a reload picks up domains
+  the panel added. **The validation route is not optional:** AutoSSL proves
+  domain control over plain HTTP, so `/.well-known/pki-validation/` (Sectigo,
+  which AutoSSL uses) and `/.well-known/acme-challenge/` must reach Apache
+  with no filters and no WAF — otherwise renewals fail silently about 90 days
+  after deployment. `zentinel lint` warns about both mistakes. Full example:
+  `config/examples/cpanel-autossl.kdl`.
 - Per-tenant LVE-aligned rate limiting: IDEAS #15.
